@@ -118,6 +118,8 @@
     histIdx = history.length;
     inputText = '';
     error = '';
+
+    const isFirstMessage = messages.length === 0;
     messages = [...messages, { role: 'user', content: text }];
     scrollToBottom(chatContainer);
     streaming = true;
@@ -128,12 +130,33 @@
     timer = setInterval(() => { elapsed = (performance.now() - startTime) / 1000; }, 100);
 
     try {
+      let apiMessages = messages.map(m => ({ role: m.role, content: m.content }));
+
+      // Auto-inject pinned/anchored memory on the very first message of a fresh chat session.
+      // This connects "Bro" to his persistent memory cells without the user having to paste it manually.
+      if (isFirstMessage) {
+        if (!memLoaded) {
+          await loadMemory();
+        }
+        const pinnedMems = memCells.filter(c => c.pinned || c.anchored);
+        if (pinnedMems.length > 0) {
+          const memText = pinnedMems.map(c => `${c.key}:\n${c.value}`).join('\n\n---\n\n');
+          apiMessages = [
+            {
+              role: 'system',
+              content: `Your current persistent memory cells (auto-loaded at the start of this chat session from the Memory tab):\n\n${memText}\n\nTreat these as your long-term memory. Reference them, update them via tools when you learn new important facts, and stay consistent with them. The Memory tab in the UI reflects the live cells in ~/bro/memory.json.`
+            },
+            ...apiMessages
+          ];
+        }
+      }
+
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: MODEL,
-          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          messages: apiMessages,
           max_tokens: 4096, temperature: 0.7, stream: true,
         }),
       });
@@ -236,16 +259,37 @@
 
   // ── Terminal ──
   async function runCommand() {
-    const cmd = termInput.trim();
-    if (!cmd || termRunning) return;
+    let raw = termInput.trim();
+    if (!raw || termRunning) return;
+
+    // Support !sh / shell prefix from Gemma's tool outputs (the primitive !sh tool)
+    // Accepts:
+    //   !sh
+    //   ls -la ~
+    // or
+    //   !sh ls -la ~
+    // or
+    //   shell
+    //   command here
+    // We extract the actual command to run.
+    let toExecute = raw;
+    const prefixMatch = raw.match(/^(?:!?\s*sh|shell)\s*\n?(.*)$/is);
+    if (prefixMatch) {
+      toExecute = (prefixMatch[1] || '').trim();
+      if (!toExecute) {
+        // prefix only on first line, rest of block is the command
+        toExecute = raw.replace(/^(?:!?\s*sh|shell)\s*\n?/is, '').trim();
+      }
+    }
+
     termInput = '';
-    termOutput = [...termOutput, `$ ${cmd}`];
+    termOutput = [...termOutput, `$ ${toExecute || raw}`];
     termRunning = true;
     scrollToBottom(termContainer);
     try {
       let result: string;
       if (isTauri) {
-        result = await invoke('run_shell', { cmd }) || '';
+        result = await invoke('run_shell', { cmd: toExecute || raw }) || '';
       } else {
         result = '(shell requires Tauri)';
       }
@@ -586,7 +630,7 @@
         <div class="term-line">{line}</div>
       {/each}
       {#if !termOutput.length}
-        <div class="term-line dim">{config.name} shell · type commands below</div>
+        <div class="term-line dim">{config.name} shell · type commands or paste !sh / shell blocks from Gemma (auto-stripped)</div>
       {/if}
     </div>
   </main>
@@ -594,7 +638,7 @@
     <div class="term-prompt">
       <span class="term-ps1">$</span>
       <input class="term-input" bind:value={termInput} onkeydown={termKeydown}
-        placeholder="command..." disabled={termRunning} />
+        placeholder="command... (or paste !sh block from Gemma)" disabled={termRunning} />
     </div>
   </footer>
   {/if}
