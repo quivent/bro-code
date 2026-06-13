@@ -4,7 +4,7 @@
 
 <div class="exec-card {exec.approved ? 'ran' : 'denied'}">
   <div class="exec-cmd"><span class="exec-ps">$</span> {exec.cmd}</div>
-  <pre class="exec-out">{exec.approved ? exec.output : 'denied'}</pre>
+  <pre class="exec-out">{exec.output || (exec.approved ? '' : 'denied')}</pre>
 </div>
 
 <style lang="postcss">

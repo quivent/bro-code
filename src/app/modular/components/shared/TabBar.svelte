@@ -6,7 +6,7 @@
 
 <nav>
   {#each ['chat','prompt','memory','tools','transcripts','context','terminal','kv','source','settings'] as t}
-    <button class:active={activeTab === t} onclick={() => onTabChange(t as Tab)}>{t}</button>
+    <button class:active={activeTab === t} onclick={() => onTabChange(t as Tab)}>{t === 'kv' ? 'KV' : t.charAt(0).toUpperCase() + t.slice(1)}</button>
   {/each}
 </nav>
 

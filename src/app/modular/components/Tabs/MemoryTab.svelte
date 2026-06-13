@@ -36,7 +36,7 @@
 
 <main class="editor-main">
   <div class="editor-header">
-    <span>~/lithos/gemma/memory/memory.json</span>
+    <span>~/bro/memory/memory.json</span>
     <span class="meta">{memCells.length} cells</span>
     {#if memStatus}<span class="status">{memStatus}</span>{/if}
     <button class="reload-btn" onclick={onPersist}>standardize</button>

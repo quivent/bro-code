@@ -20,14 +20,27 @@
       onReload();
       return;
     }
-    // fallback placeholder
+    // Robust parser matching the canonical naming schema used by save + regressive migration:
+    // YYYY-MM-DD_sessionId.json (or bare sessionId.json for legacy). Always populates sessionId.
     try {
-      const raw = await (agent ? '' : '');
+      // NOTE: real impl is usually provided by parent (App) via onReload prop.
+      // This is a defensive fallback.
+      const raw = ''; // parent should supply via prop-driven reload
       transcripts = raw.trim().split('\n').filter((l: string) => l).map((path: string) => {
-        const name = path.split('/').pop()?.replace('.json', '') || path;
-        const parts = name.split('_');
-        const date = parts[0] || name.slice(0, 10);
-        const sid = parts[1] || '';
+        const bn = path.split('/').pop() || '';
+        const name = bn.replace(/\.json$/, '');
+        let date = '';
+        let sid = name;
+
+        if (/^\d{4}-\d{2}-\d{2}_/.test(name)) {
+          const parts = name.split('_');
+          date = parts[0];
+          sid = parts.slice(1).join('_') || name;
+        } else if (/^\d{4}-\d{2}-\d{2}/.test(name)) {
+          date = name.slice(0, 10);
+          sid = name.slice(11) || name;
+        }
+
         return { name, path, date, sessionId: sid };
       });
       transcriptsStatus = '';
@@ -72,7 +85,7 @@
 
 <main class="editor-main">
   <div class="editor-header">
-    <span>~/gemma/transcripts/</span>
+    <span>~/bro/transcripts/</span>
     <span class="meta">{transcripts.length} files</span>
     {#if transcriptsStatus}<span class="status error-text">{transcriptsStatus}</span>{/if}
     <button class="reload-btn" onclick={onReload || loadTranscripts}>reload</button>
@@ -100,7 +113,8 @@
       {#each transcripts as t}
         <div class="transcript-row" role="button" tabindex="0" onclick={() => (onView || viewTranscript)(t)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}>
           <span class="transcript-name">{t.name}</span>
-          <span class="transcript-date">{t.date}</span>
+          <!-- Pure English descriptive names (Origin, The Journey, The Synthesis, etc.).
+               Generated from conversation context / first message. No dates or sids. -->
         </div>
       {/each}
       {#if !transcripts.length}<div class="empty">(no transcripts yet — they save automatically)</div>{/if}

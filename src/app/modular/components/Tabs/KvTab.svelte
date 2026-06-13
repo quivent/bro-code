@@ -67,7 +67,7 @@
     if (!isTauri) return;
     try {
       const out: string = await invoke('run_shell', {
-        cmd: `cd ~/gemma/kv 2>/dev/null && stat -f "%N|%z|%Sm" -t "%Y-%m-%d %H:%M" *.safetensors 2>/dev/null; true`
+        cmd: `cd ~/bro/kv 2>/dev/null && stat -f "%N|%z|%Sm" -t "%Y-%m-%d %H:%M" *.safetensors 2>/dev/null; true`
       }) || '';
       kvSessions = out.split('\n').filter(l => l.includes('|')).map(l => {
         const [name, bytes, mtime] = l.split('|');
@@ -80,7 +80,7 @@
     if (!isTauri) { serveConfig = '(requires Tauri)'; return; }
     try {
       const out: string = await invoke('run_shell', {
-        cmd: `echo "── process ──"; ps -eo args= | grep "mlx_vlm server" | grep -v grep || echo "(not running)"; echo; echo "── launch agent (com.mlx.gemma4-31b) ──"; launchctl list 2>/dev/null | grep com.mlx.gemma4-31b || echo "(not loaded)"; echo; echo "── plist ──"; plutil -p ~/Library/LaunchAgents/com.mlx.gemma4-31b.plist 2>/dev/null | grep -E 'model|draft|kv-size|max-tokens|APC|Program' | head -20; echo; echo "── kv sessions dir ──"; du -sh ~/gemma/kv 2>/dev/null || echo "(empty)"; echo "── apc disk ──"; du -sh ~/gemma/apc 2>/dev/null || echo "(empty)"`
+        cmd: `echo "── process ──"; ps -eo args= | grep "mlx_vlm server" | grep -v grep || echo "(not running)"; echo; echo "── launch agent (com.mlx.bro or gemma) ──"; launchctl list 2>/dev/null | grep -E 'bro|gemma' || echo "(not loaded)"; echo; echo "── plist examples ──"; plutil -p ~/Library/LaunchAgents/com.mlx.* 2>/dev/null | head -30 || echo "(no plists or different setup)"; echo; echo "── kv sessions dir ──"; du -sh ~/bro/kv 2>/dev/null || echo "(empty or ~/gemma/kv for gemma-code)"; echo "── apc disk ──"; du -sh ~/bro/apc 2>/dev/null || echo "(empty)"`
       }) || '';
       serveConfig = out;
     } catch (e: any) { serveConfig = `failed: ${e}`; }
@@ -181,7 +181,7 @@
   <div class="kv-body">
     <div class="kv-intro">
       Capture current chat into a reusable KV cache snapshot (saves prompt+history as starting state for the model). 
-      Restore to continue a prior chat from the exact KV weights (fast — skips re-prefill). Sessions live in ~/gemma/kv/*.safetensors.
+      Restore to continue a prior chat from the exact KV weights (fast — skips re-prefill). Sessions live in ~/bro/kv/*.safetensors (or ~/gemma/kv in gemma-code).
     </div>
 
     <!-- Capture form (inputs+button) -->
@@ -257,5 +257,59 @@
 </main>
 
 <style lang="postcss">
-  /* KV styles */
+  /* KV styles (pulled from gemma-code reference for full parity with editor tabs) */
+  .kv-body { padding: 16px 20px; overflow-y: auto; }
+
+  .kv-intro { color: var(--text-secondary); font-size: 13px; line-height: 1.6; max-width: 760px; margin-bottom: 16px; }
+  .kv-intro strong { color: var(--text); }
+
+  .kv-capture { display: flex; gap: 8px; margin-bottom: 12px; }
+
+  .kv-input {
+    background: var(--bg-secondary); color: var(--text);
+    border: 1px solid rgba(42, 42, 58, 0.5); border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; font-family: var(--font-mono); outline: none;
+    min-width: 180px;
+  }
+  .kv-input:focus { border-color: rgba(167, 139, 250, 0.4); }
+  .kv-input.grow { flex: 1; }
+
+  .kv-list { margin-bottom: 12px; }
+
+  .kv-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; cursor: pointer;
+    border: 1px solid rgba(42, 42, 58, 0.3); border-radius: 6px;
+    margin-bottom: 4px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .kv-row:hover { background: rgba(167, 139, 250, 0.04); }
+  .kv-row.kv-selected { outline: 1px solid rgba(167, 139, 250, 0.5); }
+
+  .kv-restore-row { display: flex; gap: 8px; margin: 8px 0; align-items: center; }
+
+  .kv-output {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.4);
+    border-radius: 8px; padding: 12px 14px; margin: 8px 0 16px;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto;
+  }
+
+  .kv-config {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.4);
+    border-radius: 8px; padding: 12px 14px; margin: 8px 0 24px;
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-all; color: var(--text-secondary);
+  }
+
+  .kv-stats { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0 16px; }
+
+  .kv-stat {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text);
+    background: var(--bg-secondary); border: 1px solid rgba(42, 42, 58, 0.5);
+    border-radius: 5px; padding: 3px 8px;
+  }
+  .kv-stat-k { color: var(--muted); margin-right: 5px; }
+
+  .section-title { font-weight: 600; font-size: 12px; margin-bottom: 6px; }
+  .empty { color: var(--dim); font-size: 12px; padding: 20px 0; text-align: center; }
 </style>

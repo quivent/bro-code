@@ -40,7 +40,7 @@
 
 <main class="editor-main">
   <div class="editor-header">
-    <span>~/gemma/tools/</span>
+    <span>~/bro/tools/</span>
     <span class="meta">{tools.length} tools</span>
     {#if toolsStatus}<span class="status error-text">{toolsStatus}</span>{/if}
     <button class="reload-btn" onclick={loadTools}>reload</button>

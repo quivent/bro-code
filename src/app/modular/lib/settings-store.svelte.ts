@@ -2,7 +2,7 @@
 // Provides cross-cutting state (endpoints, local port, panes modes, appearance, agent prefs, advanced)
 // so that SettingsTab can be fully self-contained, while App/chat/send/init can consume live values.
 // Uses Svelte 5 runes ($state) at module scope for shared reactivity across importers.
-// All persistence via Tauri invoke (safe no-op in browser).
+// All persistence via Tauri invoke (or rich localStorage-backed web invoke in browser mode).
 
 import type { Endpoint } from './types';
 import {
@@ -12,6 +12,7 @@ import {
 } from './local-serve';
 import { measureTps as libMeasureTps, getTpsMessage } from './tps';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { createWebInvoke } from './config';
 
 export type ChatMode = 'solo' | 'dual' | 'vs' | 'supervision';
 
@@ -39,6 +40,11 @@ export const settings = $state({
   autoReloadPrompt: true,
   maxTranscripts: 50,
   enableToolsByDefault: true,
+  // Context management (client-side control over what history is sent to the model)
+  // Helps manage "Gemma's sliding context" when full history would exceed max_model_len or cause slowdown.
+  // 0 = send everything (rely on server-side handling). Recommended 30-100 depending on model window.
+  maxHistoryTurns: 60,  // number of recent (user + assistant) turns to keep for the prompt. Older turns are dropped client-side before sending.
+  maxToolHistory: 5,    // in sliding context, always keep the most recent N tool/exec (!sh) results even if they are older than maxHistoryTurns. This preserves some tool usage awareness without keeping the entire bloated history.
 
   // Advanced
   requestTimeoutMs: 30000,
@@ -71,9 +77,13 @@ export const settings = $state({
 
 // Internal invoke (matches App pattern; no dep on host)
 const isTauri = '__TAURI_INTERNALS__' in (typeof window !== 'undefined' ? window : {});
+const webInvoke = createWebInvoke();
 async function invoke(cmd: string, args?: Record<string, unknown>): Promise<any> {
-  if (!isTauri) return null;
-  return tauriInvoke(cmd, args);
+  if (isTauri) {
+    return tauriInvoke(cmd, args);
+  }
+  // Use the same rich web storage layer as the main app for settings persistence in browser/web mode.
+  return webInvoke(cmd, args);
 }
 
 // Helpers (duplicated from monolith for store isolation; keep in sync or move to utils later)
@@ -290,6 +300,12 @@ export async function loadSettings() {
     const toolsDefault = await invoke('get_setting', { key: 'enableToolsByDefault' });
     if (toolsDefault !== null) settings.enableToolsByDefault = toolsDefault === 'true';
 
+    const maxHist = await invoke('get_setting', { key: 'maxHistoryTurns' });
+    if (maxHist) settings.maxHistoryTurns = parseInt(maxHist);
+
+    const maxTool = await invoke('get_setting', { key: 'maxToolHistory' });
+    if (maxTool) settings.maxToolHistory = parseInt(maxTool);
+
     // Advanced
     const timeout = await invoke('get_setting', { key: 'requestTimeoutMs' });
     if (timeout) settings.requestTimeoutMs = parseInt(timeout);
@@ -382,6 +398,8 @@ export async function saveAgentSettings() {
     await invoke('set_setting', { key: 'autoReloadPrompt', value: settings.autoReloadPrompt.toString() });
     await invoke('set_setting', { key: 'maxTranscripts', value: settings.maxTranscripts.toString() });
     await invoke('set_setting', { key: 'enableToolsByDefault', value: settings.enableToolsByDefault.toString() });
+    await invoke('set_setting', { key: 'maxHistoryTurns', value: settings.maxHistoryTurns.toString() });
+    await invoke('set_setting', { key: 'maxToolHistory', value: settings.maxToolHistory.toString() });
   } catch (e) {
     console.warn('Failed to save agent settings', e);
   }

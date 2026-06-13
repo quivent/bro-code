@@ -84,3 +84,71 @@ export function buildApiMessages(
   const sys = sysParts.length ? [{ role: 'system', content: sysParts.join('\n\n') }] : [];
   return [...sys, ...history];
 }
+
+/**
+ * Client-side sliding context control.
+ * Keeps the most recent N turns (a turn ~ user message + following assistant).
+ * Additionally keeps the most recent M tool usage / exec results ( !sh calls and their outputs ),
+ * even if they fall outside the regular turn window. This gives the model continued awareness
+ * of recent tool usage without keeping the entire history (addressing the "keep some component
+ * of tool usage" request).
+ *
+ * Older non-tool turns are dropped before building apiMessages. System context is always kept.
+ *
+ * maxTurns: number of recent turns to retain (0 or negative = keep all for turns).
+ * maxTools: number of most recent tool/exec messages to always retain (0 = none).
+ */
+export function pruneHistoryForContext<T extends { role: string; content?: string; exec?: any }>(
+  history: T[],
+  maxTurns: number,
+  maxTools: number = 0
+): T[] {
+  if (history.length === 0) return history;
+  if ((!maxTurns || maxTurns <= 0) && (!maxTools || maxTools <= 0)) return history;
+
+  let pruned: T[] = [];
+
+  if (maxTurns && maxTurns > 0) {
+    const keep = Math.max(2, maxTurns * 2);
+    if (history.length <= keep) {
+      pruned = [...history];
+    } else {
+      pruned = history.slice(-keep);
+    }
+  } else {
+    pruned = [...history];
+  }
+
+  if (maxTools && maxTools > 0) {
+    // Collect the most recent tool/exec messages from the *original* history.
+    const recentTools: T[] = [];
+    for (let i = history.length - 1; i >= 0 && recentTools.length < maxTools; i--) {
+      const h = history[i];
+      if (h && (h.exec || (h.content && h.content.includes('[exec]')))) {
+        recentTools.unshift(h);  // unshift to keep chronological order
+      }
+    }
+
+    // Merge recent tools that aren't already in the pruned list (by reference or content match).
+    const existing = new Set(pruned);
+    const toAdd: T[] = [];
+    for (const toolMsg of recentTools) {
+      if (!existing.has(toolMsg)) {
+        // Fallback check by content for safety (if objects differ).
+        if (!pruned.some(p => p.content === toolMsg.content)) {
+          toAdd.push(toolMsg);
+        }
+      }
+    }
+
+    if (toAdd.length > 0) {
+      // Merge and re-sort by original order to preserve chronology.
+      const combined = [...pruned, ...toAdd];
+      const indexMap = new Map(history.map((h, idx) => [h, idx]));
+      combined.sort((a, b) => (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0));
+      pruned = combined;
+    }
+  }
+
+  return pruned;
+}

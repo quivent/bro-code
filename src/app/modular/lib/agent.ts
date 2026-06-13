@@ -1,5 +1,6 @@
 import type { InvokeFn, Message, ChatPane, CtxEntry, Endpoint } from './types';
-import { buildApiMessages, loadContext } from './context';
+import { buildApiMessages, loadContext, pruneHistoryForContext } from './context';
+import { settings as appSettings } from './settings-store.svelte.ts';  // for runtime maxHistoryTurns control over what gets sent to model
 import { loadMemory, persistMemory, getMemorySection, type MemoryManagerOptions } from './memory';
 import { loadPrompt } from './prompt';
 import { extractExecCalls, EXEC_AWARENESS, runExec, requestExecApproval, isDestructiveCmd, type ExecApprovalResult } from './scp';
@@ -161,7 +162,14 @@ export async function createAgentCore(opts: {
   function buildMessages(history: Array<{role: string; content: string}>) {
     // Always include the rich system context (prompt + memory cells + SCP awareness)
     // Note: full buildApiMessages in monolith also folds exec results; this version assumes history is clean or caller handles.
-    return buildApiMessages(history, systemContext);
+    // Apply client-side sliding/pruning for context control if maxHistoryTurns is set >0.
+    // This lets the user control how much of the conversation history is sent to the model,
+    // independent of (or in addition to) the server's own context window management.
+    let h = history;
+    // We don't have direct access to settings here, but the monolith can pass a pruned snapshot.
+    // For internal agent use (e.g. exec rounds), we keep full unless caller prunes before.
+    // Pruning is primarily applied at the call sites (App send + prepare).
+    return buildApiMessages(h, systemContext);
   }
 
   function prepareApiMessages(history: Array<{role: string; content: string}>) {
@@ -342,6 +350,14 @@ export async function createAgentCore(opts: {
         ? [...providedHistory]
         : (pane?.messages || []).map(m => ({ role: m.role, content: m.content, thinking: m.thinking, exec: m.exec }));
 
+    // Apply user-controlled sliding context here for internal agent builds too (exec rounds etc.).
+    // Respects the setting so the model never receives more than desired, even in multi-round !sh.
+    const maxT = appSettings.maxHistoryTurns || 0;
+    const maxTools = appSettings.maxToolHistory || 0;
+    if (maxT > 0 || maxTools > 0) {
+      currentHistory = pruneHistoryForContext(currentHistory, maxT, maxTools);
+    }
+
     // Prevent duplicate user message if the caller already appended it to the provided history (e.g. monolith solo/supervision path)
     // This was causing the model to receive the user input twice in a row and echo/repeat it.
     if (currentHistory.length === 0 || 
@@ -369,7 +385,14 @@ export async function createAgentCore(opts: {
 
     try {
       for (let round = 0; round <= MAX_EXEC_ROUNDS; round++) {
-        const apiMessages = buildMessages(currentHistory.map(h => ({ role: h.role, content: h.content })));
+        // Re-apply prune before each model call in case exec rounds added turns.
+        let hForModel = currentHistory;
+        const maxT2 = appSettings.maxHistoryTurns || 0;
+        const maxTools2 = appSettings.maxToolHistory || 0;
+        if (maxT2 > 0 || maxTools2 > 0) {
+          hForModel = pruneHistoryForContext(hForModel, maxT2, maxTools2);
+        }
+        const apiMessages = buildMessages(hForModel.map(h => ({ role: h.role, content: h.content })));
 
         if (pane) {
           // keep pane in sync
@@ -430,11 +453,11 @@ export async function createAgentCore(opts: {
 
           if (isDestructiveCmd(cmd)) {
             // Remove any ability to delete files - auto-deny without execution or UI prompt
-            const output = '(command denied: deleting files is not allowed)';
+            const modelResult = '(command denied: deleting files is not allowed)';
             const execUserTurn = { 
               role: 'user', 
-              content: `[exec] ${cmd}`, 
-              exec: { cmd, output, approved: false } 
+              content: `[exec] ${cmd}\n${modelResult}`, 
+              exec: { cmd, output: modelResult, approved: false } 
             } as any;
             currentHistory.push(execUserTurn);
             continue;
@@ -442,11 +465,11 @@ export async function createAgentCore(opts: {
 
           // Prevent calling the exact same command twice after a reject (as requested).
           if (rejectedCmds.has(cmd)) {
-            const output = '(previously rejected this exact command; do not call the same twice after a reject)';
+            const modelResult = '(previously rejected this exact command; do not call the same twice after a reject)';
             const execUserTurn = { 
               role: 'user', 
-              content: `[exec] ${cmd}`, 
-              exec: { cmd, output, approved: false } 
+              content: `[exec] ${cmd}\n${modelResult}`, 
+              exec: { cmd, output: modelResult, approved: false } 
             } as any;
             currentHistory.push(execUserTurn);
             continue;
@@ -460,19 +483,29 @@ export async function createAgentCore(opts: {
             rejectedCmds.add(cmd);
           }
 
-          // Format results to match what the EXEC_AWARENESS prompt expects ("Command results: ...").
-          // This avoids adding noisy extra "User feedback: Do not do things like..." user turns
-          // that were making the model overly cautious or less fluent at emitting clean !sh calls.
-          const output = approved 
-            ? await runExec(cmd, invoke, true)
-            : feedback 
-              ? `Command results: The human denied this command and said: ${feedback}. (Follow the exact SCP structure for any future tool use.)` 
-              : '(the human denied this command)';
+          // Capture result (stdout or denial+feedback). Put the informative text (with "Command results: ..." wrapper
+          // to match exactly what EXEC_AWARENESS teaches the model to expect) into BOTH:
+          //   - .content (so it is included when buildMessages / buildApiMessages constructs the prompt for the *next model call inside this send loop*)
+          //   - .exec.output (for UI exec cards, transcripts, ctx estimation, and so the human sees what was fed back)
+          // This ensures the model receives the tool output / human feedback *immediately* for its continuation (the [INSIGHT] or next action or final reply),
+          // inside the same agent turn, instead of only on the following human turn.
+          let rawForUi = '';
+          let modelResult = '';
+          if (approved) {
+            rawForUi = await runExec(cmd, invoke, true);
+            modelResult = `Command results:\n${rawForUi}`;
+          } else if (feedback) {
+            modelResult = `Command results: The human denied this command and said: ${feedback}. (Follow the exact SCP structure for any future tool use.)`;
+            rawForUi = modelResult;  // show the specific feedback in the denied exec card too
+          } else {
+            modelResult = '(the human denied this command)';
+            rawForUi = modelResult;
+          }
 
           const execUserTurn = { 
             role: 'user', 
-            content: `[exec] ${cmd}`, 
-            exec: { cmd, output, approved } 
+            content: `[exec] ${cmd}\n${modelResult}`, 
+            exec: { cmd, output: rawForUi, approved } 
           } as any;
           currentHistory.push(execUserTurn);
 

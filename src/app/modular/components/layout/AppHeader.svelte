@@ -20,7 +20,7 @@
         class:active={activeTab === tab} 
         onclick={() => onTabChange(tab as Tab)}
       >
-        {tab}
+        {tab === 'kv' ? 'KV' : tab.charAt(0).toUpperCase() + tab.slice(1)}
       </button>
     {/each}
   </nav>

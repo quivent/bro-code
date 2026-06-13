@@ -21,6 +21,7 @@
     onDropReorder,
     onPickFile,
     onAddPath,
+    onToggleShowInChat,
   } = $props<{
     ctxEntries?: CtxEntry[];
     ctxLoadStatus?: string;
@@ -33,6 +34,7 @@
     onDropReorder?: (target: number) => void;
     onPickFile?: (directory: boolean) => void;
     onAddPath?: (path: string) => void;
+    onToggleShowInChat?: (i: number) => void;
   }>();
 
   // Prefer entries passed by host (monolith state); fall back to agent's (now includes full ctx from loadContext with dirs).
@@ -60,6 +62,10 @@
       >
         <span class="grip">⠿</span>
         <span class="kind {en.kind}">{en.kind}</span>
+        <label class="show-on-chat" title="Mark to show this context visibly in the chat area and preferentially keep in sliding context">
+          <input type="checkbox" checked={!!en.showInChat} onchange={() => onToggleShowInChat?.(i)} />
+          <span>show on chat</span>
+        </label>
         <span class="path" title={en.path}>{en.path}</span>
         <button class="x" onclick={() => onRemove(i)}>×</button>
       </div>
@@ -135,4 +141,17 @@
     transition: all 150ms ease;
   }
   .status { color: var(--green); font-size: 11px; transition: opacity 300ms; }
+
+  .show-on-chat {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    color: var(--dim);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    margin-left: 4px;
+  }
+  .show-on-chat input { margin: 0; width: 11px; height: 11px; }
 </style>

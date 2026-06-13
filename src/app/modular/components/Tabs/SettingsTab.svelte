@@ -335,6 +335,25 @@
         <span class="toggle-label">New sessions start with tools manifest loaded</span>
       </label>
     </div>
+
+    <div class="setting">
+      <div class="setting-label">Max History Turns for Context</div>
+      <input type="number" bind:value={appSettings.maxHistoryTurns} oninput={onSaveAgent} class="setting-input small" min="0" max="500" step="5" />
+      <div class="setting-hint">
+        Client-side sliding window. Keeps only the most recent N (user+assistant) turns when building the prompt sent to Gemma.
+        0 = unlimited (full history + all prior !sh results). Lower values reduce context size / token cost / latency at the cost of shorter memory.
+        The ctx-bar shows estimated usage against the server's max_model_len. Combine with good ctxEntries pruning.
+      </div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">Max Recent Tool Uses to Retain</div>
+      <input type="number" bind:value={appSettings.maxToolHistory} oninput={onSaveAgent} class="setting-input small" min="0" max="50" step="1" />
+      <div class="setting-hint">
+        When sliding the context (above), always keep the most recent N tool/exec (!sh / command) results and their outputs, even if they are older than the history window.
+        This gives Gemma continued awareness of recent tool usage patterns without keeping the entire conversation history. 0 = do not specially retain tools (pure turn-based slide).
+      </div>
+    </div>
   </div>
 
   {:else if settingsSection === 'panes'}
@@ -435,6 +454,27 @@
 
 <style lang="postcss">
   /* Comprehensive settings styles (restored/port for modular tab) */
+  /* Base editor styles for this tab (pulled for self-contained consistency with other tabs like Context/Source) */
+  .editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .editor-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; font-size: 12px; color: var(--muted);
+    font-family: var(--font-mono); border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+  }
+  .dirty { color: var(--warn); font-size: 11px; }
+  .status { color: var(--green); font-size: 11px; transition: opacity 300ms; }
+  .save-btn {
+    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399; padding: 4px 12px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; font-family: var(--font-mono);
+  }
+  .reload-btn {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary); padding: 4px 12px; border-radius: 5px;
+    cursor: pointer; font-size: 11px; font-family: var(--font-mono);
+    transition: all 150ms ease;
+  }
+
   .settings-subnav {
     display: flex;
     gap: 4px;

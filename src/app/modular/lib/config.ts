@@ -42,3 +42,81 @@ export function createDefaultInvoke(): InvokeFn {
     return null;
   };
 }
+
+/**
+ * Web / browser-friendly invoke implementation.
+ * Uses localStorage for settings + a virtual in-memory + LS-backed "filesystem"
+ * for prompt.md, memory.json, context files, transcripts, etc.
+ *
+ * This lets the pure Vite web app (served from the Gemma inference server host,
+ * or anywhere) have usable persistence and core features without Tauri.
+ *
+ * Paths are virtualized (~/ stripped to a key prefix). Real server-side FS/tools
+ * require a small companion backend (see web-backend/ idea below).
+ */
+export function createWebInvoke(): InvokeFn {
+  const LS_PREFIX = 'bro-web:';
+  const FS_PREFIX = LS_PREFIX + 'fs:';
+  const SETTING_PREFIX = LS_PREFIX + 'setting:';
+
+  function normalizePath(p: string): string {
+    if (!p) return 'unknown';
+    return p.replace(/^~\/+/, '').replace(/^\/+/, '').replace(/\s+/g, '_');
+  }
+
+  return async (cmd: string, args?: Record<string, unknown>) => {
+    const path = (args?.path as string) || '';
+    const key = (args?.key as string) || '';
+    const value = args?.value as string | undefined;
+    const cmdStr = (args?.cmd as string) || '';
+
+    if (cmd === 'read_file') {
+      const norm = normalizePath(path);
+      const stored = localStorage.getItem(FS_PREFIX + norm);
+      if (stored !== null) return stored;
+
+      // Sensible defaults for core files so the app is immediately usable
+      if (norm.includes('memory') || norm.endsWith('memory.json')) {
+        return JSON.stringify({}); // empty memory
+      }
+      if (norm.includes('prompt') || norm.endsWith('prompt.md')) {
+        return '# Bro Web Prompt\n\nYou are a helpful local agent running in the browser.';
+      }
+      return ''; // empty for other context files
+    }
+
+    if (cmd === 'write_file') {
+      const norm = normalizePath(path);
+      const content = (args?.content as string) || '';
+      localStorage.setItem(FS_PREFIX + norm, content);
+      return;
+    }
+
+    if (cmd === 'run_shell') {
+      // In pure web mode we can't (and shouldn't) run arbitrary shell on the client.
+      // Return a friendly message. For real execution when co-located with Gemma,
+      // run a tiny companion backend on the server and point a future `webShellEndpoint`.
+      console.warn('[web] run_shell requested (demo only):', cmdStr);
+      if (cmdStr.includes('gemma kv')) {
+        return 'KV operations require the native desktop app or a server-side backend.';
+      }
+      return `(web demo) would have run: ${cmdStr}\n\nTip: For real tools, serve the web app from the Gemma host + add a small /api/shell proxy.`;
+    }
+
+    if (cmd === 'get_setting') {
+      if (!key) return null;
+      const v = localStorage.getItem(SETTING_PREFIX + key);
+      return v !== null ? v : null;
+    }
+
+    if (cmd === 'set_setting') {
+      if (key && value !== undefined) {
+        localStorage.setItem(SETTING_PREFIX + key, value);
+      }
+      return;
+    }
+
+    // For any other Tauri command (e.g. dialog, specific plugins) just no-op in web.
+    return null;
+  };
+}

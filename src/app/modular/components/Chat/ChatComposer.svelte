@@ -129,7 +129,7 @@
     {#if msg.exec}
       <div class="exec-card {msg.exec.approved ? 'ran' : 'denied'}">
         <div class="exec-cmd"><span class="exec-ps">$</span> {msg.exec.cmd}</div>
-        <pre class="exec-out">{msg.exec.approved ? msg.exec.output : 'denied'}</pre>
+        <pre class="exec-out">{msg.exec.output || (msg.exec.approved ? '' : 'denied')}</pre>
       </div>
     {:else}
     <div class="message {msg.role}">

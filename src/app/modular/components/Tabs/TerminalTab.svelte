@@ -85,5 +85,21 @@
 </main>
 
 <style lang="postcss">
-  /* Terminal styles from original */
+  /* Terminal styles (pulled from gemma-code reference) */
+  .term-main {
+    flex: 1; overflow-y: auto; padding: 16px 20px;
+    font-family: var(--font-mono); font-size: 13px;
+    background: #0a0c10;
+  }
+  .term-output { display: flex; flex-direction: column; gap: 1px; }
+  .term-line { color: var(--text); line-height: 1.7; white-space: pre-wrap; word-break: break-all; }
+  .term-line.dim { color: var(--dim); }
+  .term-prompt { display: flex; align-items: center; gap: 10px; }
+  .term-ps1 { color: var(--green); font-family: var(--font-mono); font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .term-input {
+    border-radius: 0; border: none; border-bottom: 1px solid rgba(42, 42, 58, 0.3);
+    background: transparent; font-family: var(--font-mono); font-size: 13px;
+  }
+  .term-input:focus { border-color: rgba(167, 139, 250, 0.4); box-shadow: none; }
+  .term-hint { font-size: 10px; color: var(--dim); padding: 4px 0 0 20px; }
 </style>

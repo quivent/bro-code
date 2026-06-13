@@ -40,7 +40,7 @@
 
 <main class="editor-main">
   <div class="editor-header">
-    <span>~/gemma/prompt.md</span>
+    <span>~/bro/prompt.md</span>
     {#if promptDirty}<span class="dirty">● unsaved</span>{/if}
     {#if promptStatus}<span class="status">{promptStatus}</span>{/if}
     <button class="save-btn" onclick={onSave} disabled={!promptDirty}>save</button>
@@ -67,7 +67,27 @@
 </main>
 
 <style lang="postcss">
-  /* prompt styles (scoped from original) */
+  /* prompt styles (scoped from original) + base editor for consistency */
+  .editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .editor-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; font-size: 12px; color: var(--muted);
+    font-family: var(--font-mono); border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+  }
+  .dirty { color: var(--warn); font-size: 11px; }
+  .status { color: var(--green); font-size: 11px; transition: opacity 300ms; }
+  .save-btn {
+    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399; padding: 4px 12px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; font-family: var(--font-mono);
+  }
+  .reload-btn {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary); padding: 4px 12px; border-radius: 5px;
+    cursor: pointer; font-size: 11px; font-family: var(--font-mono);
+    transition: all 150ms ease;
+  }
+
   .prompt-overlay-wrap { position: relative; }
   .prompt-highlight { 
     position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
