@@ -20,8 +20,21 @@ export function normalizeToChatCompletions(input: string): string {
   if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
   try {
     const u = new URL(url);
-    let path = u.pathname.replace(/\/$/, '');
-    if (path.endsWith('/chat/completions')) return u.toString();
+
+    // Strip all trailing slashes first — makes the normalizer much more forgiving
+    // for inputs like "http://host:port/v1/chat/completions/" or "http://host:port/".
+    let path = u.pathname.replace(/\/+$/, '');
+
+    // Clean any sequence of consecutive /v1 repetitions to a single /v1.
+    // Prevents bad paths like /v1/v1/chat/completions or /v1/v1/models that 404.
+    path = path.replace(/\/v1(\/+v1)*/g, '/v1');
+
+    // If the path contains "completions", trust it (for remote/custom full URLs the user pasted).
+    if (/completions/i.test(path)) {
+      u.pathname = path;
+      return u.toString();
+    }
+
     if (path === '' || path === '/v1') u.pathname = '/v1/chat/completions';
     else if (path.endsWith('/v1')) u.pathname = path + '/chat/completions';
     else if (!path.includes('/chat')) u.pathname = (path || '') + '/v1/chat/completions';
@@ -38,7 +51,8 @@ export function getHealthUrl(chatUrl: string): string {
       u.pathname = u.pathname.replace(/\/chat\/completions$/, '/models');
       return u.toString();
     }
-    const base = u.pathname.replace(/\/$/, '') || '/v1';
+    let base = u.pathname.replace(/\/$/, '') || '/v1';
+    base = base.replace(/\/v1(\/+v1)*/g, '/v1');
     u.pathname = base + '/models';
     return u.toString();
   } catch {

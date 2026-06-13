@@ -1,6 +1,10 @@
 /**
  * Model-specific configuration. Replace these values to create a new app.
  * Everything else in App.svelte is shared infrastructure.
+ *
+ * NOTE: Endpoints can now be managed at runtime via the "settings" tab (full dynamic UI + persistence).
+ * The values here serve as initial/legacy fallback. The Settings tab (wired from the modular layer)
+ * is the primary way to add, edit, test, reorder, and activate inference endpoints (including + Local gemma).
  */
 export interface ModelConfig {
   name: string;

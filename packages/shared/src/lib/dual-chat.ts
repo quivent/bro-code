@@ -1,4 +1,5 @@
 import type { ModelConfig } from '../types';
+import { normalizeToChatCompletions } from './endpoint-management';
 
 export interface ChatPaneState {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -70,7 +71,15 @@ export async function streamToPane(
     if (systemContext && !apiMessages.some(m => m.role === 'system')) {
       finalMessages = [{ role: 'system', content: systemContext }, ...apiMessages];
     }
-    const res = await fetch(mc.endpoint, {
+    const endpoint = normalizeToChatCompletions(mc.endpoint) || mc.endpoint;
+    if (!endpoint || !endpoint.startsWith('http')) {
+      pane.error = 'invalid endpoint URL for completions';
+      pane.streaming = false;
+      onUpdate();
+      return '';
+    }
+    console.warn(`[inference] dual completions POST → ${endpoint} (model: ${mc.model})`);
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

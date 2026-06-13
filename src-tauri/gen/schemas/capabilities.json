@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for the Mercenary app with tool system","local":true,"windows":["*"],"permissions":["core:default","shell:allow-open"]}}
+{"default":{"identifier":"default","description":"Default capabilities for the Mercenary app with tool system","local":true,"windows":["*"],"permissions":["core:default","shell:allow-open","dialog:default"]}}
