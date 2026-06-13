@@ -71,5 +71,26 @@
 </main>
 
 <style lang="postcss">
-  /* From original .tools-list, .tool-row etc. */
+  /* tools styles (pulled from gemma-code reference) */
+  .tools-list { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+
+  .tool-row {
+    padding: 10px 14px; cursor: pointer;
+    background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(42, 42, 58, 0.4);
+    border-radius: 8px; transition: all 150ms ease; font-family: var(--font-mono); font-size: 12px;
+  }
+  .tool-row:hover { background: rgba(22, 27, 34, 0.9); border-color: rgba(139, 92, 246, 0.3); }
+
+  .tool-name { color: var(--green); font-weight: 600; }
+  .tool-desc { color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin: 6px 0; }
+  .tool-meta { color: var(--dim); font-size: 11px; }
+
+  .tool-detail { flex: 1; overflow-y: auto; }
+  .tool-source {
+    flex: 1; overflow-y: auto; padding: 20px 24px; margin: 0;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+    background: #0a0c10; color: var(--text); white-space: pre-wrap;
+    border: none;
+  }
+  .empty { color: var(--dim); font-size: 12px; padding: 20px 0; text-align: center; }
 </style>

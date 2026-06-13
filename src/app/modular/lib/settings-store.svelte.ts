@@ -625,7 +625,7 @@ export async function testEndpoint(ep: Endpoint) {
   }
 
   let healthOk = false;
-  let isRealModelServer = false;
+  let modelsReachable = false;
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 6000);
@@ -635,19 +635,23 @@ export async function testEndpoint(ep: Endpoint) {
     if (!res.ok) {
       ep.lastHealth = { ok: false, message: `HTTP ${res.status}` };
     } else {
+      modelsReachable = true;
       try {
         const text = await res.clone().text();
         if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
           const j = JSON.parse(text);
           if (Array.isArray(j?.data) || j?.object === 'list') {
-            isRealModelServer = true;
             ep.availableModels = Array.isArray(j.data) ? j.data.map((d: any) => d.id || d.name).filter(Boolean) : [];
           }
         }
       } catch {}
-      if (isRealModelServer) {
-        healthOk = true;
-      } else {
+      // Lenient: reaching the derived /models URL with 200 is enough to consider the probe "valid"
+      // for health purposes. We only require the classic OpenAI list shape to auto-populate
+      // the availableModels dropdown for exact model ID selection. This prevents the hard
+      // "test failed (completions ping 404/no rate and /models not a valid model server)"
+      // for servers whose /models endpoint is reachable but returns a slightly different envelope.
+      healthOk = modelsReachable;
+      if (!modelsReachable) {
         ep.lastHealth = { ok: false, message: 'not a model server (wrong response)' };
       }
     }
@@ -656,6 +660,13 @@ export async function testEndpoint(ep: Endpoint) {
       ok: false,
       message: e.name === 'AbortError' ? 'timeout' : (e.message || 'connection failed')
     };
+  }
+
+  // If we got a usable models list from the probe, correct the model ID on this ep *before*
+  // running the completions TPS test. This way the test POST uses a server-known model ID
+  // instead of a friendly label like "Gemma" that would 404 the completions ping.
+  if (ep.availableModels && ep.availableModels.length && !ep.availableModels.includes(ep.model)) {
+    ep.model = ep.availableModels[0];
   }
 
   const tps = await libMeasureTps(ep);
@@ -676,15 +687,17 @@ export async function testEndpoint(ep: Endpoint) {
         ok: false,
         message: 'completions 404 (the chat path the agent uses returned 404 — this endpoint will not work for real chat)',
       };
-    } else if (healthOk) {
-      // models list was reachable, but completions test ping did not produce a usable rate.
-      // Chat may still work (client-side TPS will be computed during real sends), but the dedicated test ping didn't.
+    } else if (healthOk || modelsReachable) {
+      // /models (or equivalent) was reachable, but the dedicated test completions stream didn't produce a rate.
+      // This can happen for servers that are slow on the test prompt, don't report usage in the test shape,
+      // or where the test POST didn't yield enough deltas for the char-based fallback.
+      // Real chat will still compute client-side tok/s during actual generations.
       ep.lastHealth = {
         ok: true,
-        message: 'healthy (models ok; completions test gave no rate — real chat will show client tok/s)',
+        message: 'healthy (models reachable; completions test gave no rate — real chat will show client tok/s)',
       };
     } else {
-      ep.lastHealth = { ok: false, message: 'test failed (completions ping 404/no rate and /models not a valid model server)' };
+      ep.lastHealth = { ok: false, message: 'test failed (completions ping 404 or no usable rate, and /models probe did not confirm a valid inference server)' };
     }
   }
 

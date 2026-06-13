@@ -82,5 +82,57 @@
 </main>
 
 <style lang="postcss">
-  /* ctx styles (ported for modularity) */
+  /* Styles for the context editor tab, ported/fixed from gemma-code reference
+     (the monolithic worktree version inlines the markup + has these rules in App;
+     here we scope them locally to this component for the modular <ContextTab> usage).
+     Includes base .editor-main/.editor-header used by several tabs. */
+  .editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .editor-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; font-size: 12px; color: var(--muted);
+    font-family: var(--font-mono); border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+  }
+
+  .ctx-list { flex: 1; overflow-y: auto; padding: 14px 20px; }
+  .ctx-entry {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 6px;
+    background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    border-radius: 8px; cursor: grab; font-family: var(--font-mono); font-size: 12px;
+  }
+  .ctx-entry.dragging { opacity: 0.4; border-color: #2dd4bf; }
+  .ctx-entry .grip { color: var(--dim); cursor: grab; }
+  .ctx-entry .kind {
+    font-size: 10px; padding: 1px 7px; border-radius: 5px; text-transform: uppercase;
+    background: rgba(45, 212, 191, 0.12); color: #2dd4bf;
+  }
+  .ctx-entry .kind.prompt { background: rgba(167, 139, 250, 0.14); color: #a78bfa; }
+  .ctx-entry .kind.memory { background: rgba(240, 136, 62, 0.14); color: #f0883e; }
+  .ctx-entry .kind.dir { background: rgba(96, 165, 250, 0.14); color: #60a5fa; }
+  .ctx-entry .path { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctx-entry .x {
+    background: transparent; border: none; color: var(--text-secondary);
+    font-size: 14px; cursor: pointer; padding: 0 4px;
+  }
+  .ctx-entry .x:hover { color: #ef4444; }
+  .ctx-empty { color: var(--dim); font-size: 12px; padding: 20px 0; text-align: center; }
+  .ctx-add-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .ctx-add-input {
+    flex: 1; background: var(--bg-secondary); color: var(--text);
+    border: 1px solid rgba(42, 42, 58, 0.5); border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; font-family: var(--font-mono); outline: none;
+  }
+  .ctx-hint { color: var(--dim); font-size: 11px; line-height: 1.6; margin-top: 14px; }
+
+  .save-btn {
+    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399; padding: 4px 12px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; font-family: var(--font-mono);
+  }
+  .reload-btn {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary); padding: 4px 12px; border-radius: 5px;
+    cursor: pointer; font-size: 11px; font-family: var(--font-mono);
+    transition: all 150ms ease;
+  }
+  .status { color: var(--green); font-size: 11px; transition: opacity 300ms; }
 </style>

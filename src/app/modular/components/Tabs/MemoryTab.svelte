@@ -74,5 +74,35 @@
 </main>
 
 <style lang="postcss">
-  /* memory styles */
+  /* memory styles (pulled safely from gemma-code reference worktree for visual parity with other editor tabs) */
+  .memory-list { flex: 1; overflow-y: auto; padding: 12px 20px; }
+
+  .mem-cell {
+    padding: 10px 14px; margin-bottom: 8px;
+    background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(42, 42, 58, 0.4);
+    border-radius: 8px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .mem-cell.editing { border-color: #f0883e; }
+
+  .mem-key { color: #f0883e; font-weight: 600; cursor: pointer; margin-bottom: 4px; }
+  .mem-key:hover { text-decoration: underline; }
+
+  .badge { font-size: 10px; padding: 0 4px; border-radius: 3px; margin-left: 6px; }
+  .badge.pin { background: rgba(250, 204, 21, 0.2); color: #facc15; }
+  .badge.anchor { background: rgba(52, 211, 153, 0.2); color: #34d399; }
+
+  .mem-tags { color: var(--dim); font-size: 10px; margin-left: 8px; }
+  .mem-meta { color: var(--dim); font-size: 10px; margin-left: auto; }
+
+  .mem-value { color: var(--text); line-height: 1.4; white-space: pre-wrap; cursor: pointer; }
+  .mem-value:hover { background: rgba(255,255,255,0.03); }
+
+  .mem-edit { width: 100%; background: var(--bg-secondary); color: var(--text);
+    border: 1px solid rgba(42,42,58,0.5); border-radius: 6px; padding: 8px; font-family: var(--font-mono); font-size: 12px; }
+  .mem-edit-row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+  .mem-key-input, .mem-tags-input { background: var(--bg-secondary); color: var(--text);
+    border: 1px solid rgba(42,42,58,0.5); border-radius: 4px; padding: 4px 8px; font-size: 11px; font-family: var(--font-mono); }
+
+  .mem-add { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .empty { color: var(--dim); font-size: 12px; padding: 20px 0; text-align: center; }
 </style>

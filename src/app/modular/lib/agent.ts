@@ -420,10 +420,13 @@ export async function createAgentCore(opts: {
         if (!calls.length || round === MAX_EXEC_ROUNDS) break;
 
         for (const cmd of calls.slice(0, 3)) {
-          const last = currentHistory[currentHistory.length - 1];
-          if (last && last.role === 'assistant') {
-            last.content = `[model requested: !sh ${cmd}]`;
-          }
+          // Do NOT rewrite the assistant content here (in currentHistory).
+          // currentHistory is used to build the actual prompts sent to the model on the next round
+          // (and is the source for history passed back to the UI layer).
+          // Keeping the model's original output (which followed EXEC_AWARENESS / SCP with the !sh line)
+          // lets it stay good at the format, the way it was in gemma-code.
+          // The UI placeholder "[model requested: !sh ...]" is now applied only in the final
+          // messages adoption step in App.svelte (for display + to keep exec cards working).
 
           if (isDestructiveCmd(cmd)) {
             // Remove any ability to delete files - auto-deny without execution or UI prompt
@@ -457,10 +460,13 @@ export async function createAgentCore(opts: {
             rejectedCmds.add(cmd);
           }
 
+          // Format results to match what the EXEC_AWARENESS prompt expects ("Command results: ...").
+          // This avoids adding noisy extra "User feedback: Do not do things like..." user turns
+          // that were making the model overly cautious or less fluent at emitting clean !sh calls.
           const output = approved 
             ? await runExec(cmd, invoke, true)
             : feedback 
-              ? `(the human denied this command and said: ${feedback})` 
+              ? `Command results: The human denied this command and said: ${feedback}. (Follow the exact SCP structure for any future tool use.)` 
               : '(the human denied this command)';
 
           const execUserTurn = { 
@@ -470,14 +476,8 @@ export async function createAgentCore(opts: {
           } as any;
           currentHistory.push(execUserTurn);
 
-          if (feedback) {
-            // Inject the user's feedback as additional context so the model learns not to do things like ls ~ that hang,
-            // and not to repeat after reject.
-            currentHistory.push({
-              role: 'user',
-              content: `User feedback: ${feedback}. Do not do things like 'ls ~' which hangs forever. Do not call the same command twice after a reject.`
-            });
-          }
+          // No extra meta user turn for feedback anymore (it is already in the result above).
+          // The "Say something back" UI option still works perfectly for the human side.
         }
       }
     } finally {

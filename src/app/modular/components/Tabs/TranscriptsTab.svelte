@@ -109,5 +109,24 @@
 </main>
 
 <style lang="postcss">
-  /* Styles from original .editor-main, .transcript-* etc. - can be moved/scoped */
+  /* transcript styles (safely pulled from gemma-code reference) */
+  .transcript-list { flex: 1; overflow-y: auto; padding: 8px 20px; }
+
+  .transcript-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; cursor: pointer;
+    border-bottom: 1px solid rgba(42, 42, 58, 0.3);
+    transition: background 150ms ease;
+  }
+  .transcript-row:hover { background: rgba(167, 139, 250, 0.04); }
+
+  .transcript-name { color: var(--lavend); font-size: 13px; font-family: var(--font-mono); }
+  .transcript-date { color: var(--dim); font-size: 11px; }
+
+  .transcript-view { flex: 1; overflow-y: auto; padding: 16px 24px; }
+
+  .transcript-msg { margin-bottom: 16px; max-width: 780px; }
+  .transcript-msg.user .transcript-role { color: var(--blue); font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .transcript-msg.assistant .transcript-role { color: var(--hotpink); font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .transcript-text { color: var(--text); font-size: 14px; line-height: 1.6; padding: 8px 12px; background: var(--bg-secondary); border-radius: 8px; }
 </style>

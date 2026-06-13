@@ -38,13 +38,15 @@ export function isDestructiveCmd(cmd: string): boolean {
   return false;
 }
 
-// Global pending exec approval state (for UI approval dialog)
+// Global pending exec approval state (for UI approval dialog / fallback when no callback provided).
+// "Always this session" is tracked per exact command string (Set) so that approving one
+// command forever doesn't silently auto-approve unrelated/different commands later in the session.
 export let pendingExec: { cmd: string } | null = null;
 export let execResolver: ((result: ExecApprovalResult) => void) | null = null;
-export let execAlwaysAllow = false;
+export let alwaysAllowedCmds = new Set<string>();
 
 export function requestApproval(cmd: string): Promise<ExecApprovalResult> {
-  if (execAlwaysAllow) return Promise.resolve({approved: true});
+  if (alwaysAllowedCmds.has(cmd)) return Promise.resolve({approved: true});
   return new Promise((resolve) => {
     pendingExec = { cmd };
     execResolver = resolve;
@@ -52,7 +54,7 @@ export function requestApproval(cmd: string): Promise<ExecApprovalResult> {
 }
 
 export function answerExec(ok: boolean, always = false, feedback?: string) {
-  if (always && ok) execAlwaysAllow = true;
+  if (always && ok && pendingExec?.cmd) alwaysAllowedCmds.add(pendingExec.cmd);
   const r = execResolver;
   pendingExec = null;
   execResolver = null;
@@ -68,7 +70,7 @@ export interface ExecApprovalResult {
 // This allows the agent to drive the full loop while the UI layer (monolith or modular composer)
 // decides how to prompt the human (e.g. via pendingExec state + dialog, or auto-approve, etc.).
 export async function requestExecApproval(cmd: string, onApproval?: (cmd: string) => Promise<boolean | ExecApprovalResult>): Promise<ExecApprovalResult> {
-  if (execAlwaysAllow) return {approved: true};
+  if (alwaysAllowedCmds.has(cmd)) return {approved: true};
   if (onApproval) {
     const res = await onApproval(cmd);
     if (typeof res === 'boolean') return {approved: res};

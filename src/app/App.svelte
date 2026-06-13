@@ -414,18 +414,24 @@
   // Minimal addition for chat + terminal split mode
   let chatTermSplit = $state(false);
 
-  // ── Execute organ / !sh approval (same as gemma-code for the modular agent send)
-  // Now supports "Say something back" to provide feedback (e.g. "Do not run ls ~ as it hangs forever")
-  // and prevents repeating the exact same cmd after reject.
+  // ── Execute organ / !sh approval (SCP tool use + human-in-the-loop)
+  // The full UI (Run / Always this session / Deny / "Say something back" + feedback textarea)
+  // and per-command always/reject tracking are preserved for the human.
+  // However, the agent no longer mutates its internal history with the "[model requested...]"
+  // placeholder or long "User feedback: Do not..." meta turns. Those were making the model
+  // see noisy/non-SCP output as its own previous responses, causing it to become much worse
+  // at emitting clean Intent + !sh compared to gemma-code.
+  // Model now sees original outputs + "Command results: ..." style feedback (matching EXEC_AWARENESS).
+  // "Always this session" and feedback are still fully functional on the UI side.
   let pendingExec = $state<{ cmd: string } | null>(null);
   let execResolver: ((result: {approved: boolean, feedback?: string}) => void) | null = null;
-  let execAlwaysAllow = $state(false);
+  let alwaysAllowedCmds = $state<Set<string>>(new Set());
 
   let showFeedbackInput = $state(false);
   let feedbackInput = $state('');
 
   function requestApproval(cmd: string): Promise<{approved: boolean, feedback?: string}> {
-    if (execAlwaysAllow) return Promise.resolve({approved: true});
+    if (alwaysAllowedCmds.has(cmd)) return Promise.resolve({approved: true});
     return new Promise((resolve) => {
       pendingExec = { cmd };
       execResolver = resolve;
@@ -433,7 +439,8 @@
   }
 
   function answerExec(ok: boolean, always = false, feedback?: string) {
-    if (always && ok) execAlwaysAllow = true;
+    const cmd = pendingExec?.cmd;
+    if (always && ok && cmd) alwaysAllowedCmds.add(cmd);
     const r = execResolver;
     pendingExec = null;
     execResolver = null;
@@ -534,6 +541,12 @@
       });
 
       // If the agent returns a rich history (with exec turns etc.), adopt it.
+      // The agent now keeps the model's original SCP-formatted outputs (with !sh lines) in its
+      // internal history for prompt building. This restores the model's ability to reliably use
+      // the !sh format the way it did in gemma-code.
+      // For UI we still get clean exec cards. The old "[model requested: !sh ...]" placeholder
+      // rewrite was moved out of the agent's currentHistory (it was polluting the model's context
+      // on follow-up turns and after feedback).
       if (result && (result as any).history) {
         messages = (result as any).history.map((h: any) => ({
           role: h.role as 'user' | 'assistant',
@@ -544,6 +557,9 @@
       } else if (result && (result as any).reply) {
         messages = [...messages, { role: 'assistant', content: (result as any).reply }];
       }
+
+      // (Removed the previous aggressive safety-net append + some dupe logic that could
+      // introduce extra assistant turns. The agent now returns a clean history.)
 
       saveTranscript();
     } catch (e: any) {
@@ -1309,14 +1325,129 @@
   .ctx-fill.crit { background: #f87171; }
   .ctx-text { font-size: 10px; }
 
+  /* Editor tabs (Context / Prompt / Memory / Source / Kv / etc.)
+     Ported from gemma-code reference (~/.worktrees/unified-pkg/src/app/App.svelte).
+     These .editor-* and .ctx-* rules were stripped during prior CSS cleanup
+     (see comments about unused selectors and self-contained tab styles).
+     The Context page (and sibling editor tabs) were left with broken/no layout.
+     Shared via global styles here for the multiple tabs that use <main class="editor-main"> + .editor-header.
+  */
+  /* Shared editor tab base styles (for modular child components like ContextTab, PromptTab etc.)
+     Must use :global() because these classes are rendered inside separate Svelte components,
+     not directly in App.svelte's template (unlike the monolithic version in gemma-code worktree).
+     Plain rules here would only apply to elements directly in App's markup. */
+  :global(.editor-main) { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  :global(.editor-header) {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; font-size: 12px; color: var(--muted);
+    font-family: var(--font-mono); border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+  }
+
+  :global(.ctx-list) { flex: 1; overflow-y: auto; padding: 14px 20px; }
+  :global(.ctx-entry) {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 6px;
+    background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    border-radius: 8px; cursor: grab; font-family: var(--font-mono); font-size: 12px;
+  }
+  :global(.ctx-entry.dragging) { opacity: 0.4; border-color: #2dd4bf; }
+  :global(.ctx-entry .grip) { color: var(--dim); cursor: grab; }
+  :global(.ctx-entry .kind) {
+    font-size: 10px; padding: 1px 7px; border-radius: 5px; text-transform: uppercase;
+    background: rgba(45, 212, 191, 0.12); color: #2dd4bf;
+  }
+  :global(.ctx-entry .kind.prompt) { background: rgba(167, 139, 250, 0.14); color: #a78bfa; }
+  :global(.ctx-entry .kind.memory) { background: rgba(240, 136, 62, 0.14); color: #f0883e; }
+  :global(.ctx-entry .kind.dir) { background: rgba(96, 165, 250, 0.14); color: #60a5fa; }
+  :global(.ctx-entry .path) { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  :global(.ctx-entry .x) {
+    background: transparent; border: none; color: var(--text-secondary);
+    font-size: 14px; cursor: pointer; padding: 0 4px;
+  }
+  :global(.ctx-entry .x:hover) { color: #ef4444; }
+  :global(.ctx-empty) { color: var(--dim); font-size: 12px; padding: 20px 0; text-align: center; }
+  :global(.ctx-add-row) { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  :global(.ctx-add-input) {
+    flex: 1; background: var(--bg-secondary); color: var(--text);
+    border: 1px solid rgba(42, 42, 58, 0.5); border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; font-family: var(--font-mono); outline: none;
+  }
+  :global(.ctx-hint) { color: var(--dim); font-size: 11px; line-height: 1.6; margin-top: 14px; }
+
+  :global(.save-btn) {
+    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399; padding: 4px 12px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; font-family: var(--font-mono);
+  }
+  :global(.reload-btn) {
+    background: rgba(28, 33, 40, 0.6); border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary); padding: 4px 12px; border-radius: 5px;
+    cursor: pointer; font-size: 11px; font-family: var(--font-mono);
+    transition: all 150ms ease;
+  }
+  :global(.dirty) { color: var(--warn); font-size: 11px; }
+  :global(.status) { color: var(--green); font-size: 11px; transition: opacity 300ms; }
+
+  /* Source tab styles (added for consistency with ContextTab fix; :global() so they apply
+     inside modular <SourceTab> component and any monolithic sections. Directly ported from
+     gemma-code reference as requested. We only edit bro-code here.) */
+  :global(.source-main) { flex: 1; display: flex; min-height: 0; }
+
+  :global(.src-files) {
+    width: 250px; flex-shrink: 0; overflow-y: auto; padding: 10px 0;
+    border-right: 1px solid rgba(42, 42, 58, 0.5); background: rgba(13, 17, 23, 0.6);
+    font-family: var(--font-mono); font-size: 11px;
+  }
+
+  :global(.src-file) {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 14px; color: var(--text-secondary); cursor: pointer;
+  }
+
+  :global(.src-file-name) { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  :global(.src-add) {
+    visibility: hidden; background: transparent; border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px; color: #2dd4bf; font-size: 11px; line-height: 1;
+    padding: 1px 6px; cursor: pointer; flex-shrink: 0;
+  }
+
+  :global(.src-file:hover .src-add) { visibility: visible; }
+
+  :global(.src-add:hover) { background: rgba(45, 212, 191, 0.12); }
+
+  :global(.src-file:hover) { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+
+  :global(.src-file.active) { color: #2dd4bf; background: rgba(45, 212, 191, 0.08); }
+
+  :global(.src-editor) { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  :global(.src-wrap) { flex: 1; position: relative; overflow: hidden; background: #0d1117; }
+
+  :global(.src-highlight), :global(.src-input) {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    padding: 16px 20px; margin: 0;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    white-space: pre; tab-size: 2; letter-spacing: 0;
+    border: none; border-radius: 0; outline: none; overflow: auto; box-shadow: none;
+  }
+
+  :global(.src-highlight) { color: #c9d1d9; pointer-events: none; background: #0d1117; z-index: 0; }
+
+  :global(.src-input) {
+    color: transparent; caret-color: #2dd4bf; background: transparent;
+    -webkit-text-fill-color: transparent; resize: none; z-index: 1;
+  }
+
+  :global(.src-input:focus) { border: none; box-shadow: none; }
+
   .input-row {
     padding: 8px;
     border-top: 1px solid rgba(42,42,58,0.3);
   }
 
   /* Settings specific styles are provided exclusively by the SettingsTab component's own <style lang="postcss"> (self-contained).
-     All global duplicates have been excised. This fixes the CSS parse error ("Expected a valid CSS identifier" at bare "display" after the comment) and the Svelte unused-selector warnings.
-     The .editor-main and .editor-header rules (defined earlier in this <style>) will style the outer container/header inside the component. */
+     All global duplicates have been excised. This fixes the CSS parse error and the Svelte unused-selector warnings.
+     Editor tab styles (.editor-main, .editor-header, .ctx-*, shared buttons etc.) are defined just above (ported from gemma-code reference to fix the broken context page and peer tabs). */
 
   /* ── Footer / Input ── */
   footer {
