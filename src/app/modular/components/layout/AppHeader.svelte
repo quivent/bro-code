@@ -14,6 +14,9 @@
 
 <header>
   <span class="title">gemma</span>
+  {#if typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)}
+    <span class="web-mode-banner" title="Web mode (see WEB_MODE_PICKUP.md)">🌐 Web</span>
+  {/if}
   <nav>
     {#each ['chat', 'prompt', 'memory', 'tools', 'transcripts', 'context', 'terminal', 'kv', 'source', 'settings'] as tab}
       <button 
@@ -57,6 +60,17 @@
   .title {
     color: var(--pink); font-weight: 700; font-size: 15px;
     letter-spacing: 0.5px;
+  }
+  .web-mode-banner {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: #a5b4fc;
+    background: rgba(167, 139, 250, 0.1);
+    border: 1px solid rgba(167, 139, 250, 0.3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+    vertical-align: middle;
   }
   nav { display: flex; gap: 1px; background: rgba(42, 42, 58, 0.3); border-radius: 6px; padding: 2px; }
   nav button {

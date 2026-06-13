@@ -1084,6 +1084,11 @@
 <div class="app">
   <header>
     <span class="title">{config.name}</span>
+    {#if !isTauri}
+      <span class="web-mode-banner" title="Running as pure web app (Vite frontend). Persistence uses browser localStorage + virtual FS. Tools are simulated. See WEB_MODE_PICKUP.md for server co-location instructions and backend stub.">
+        🌐 Web mode
+      </span>
+    {/if}
     <nav>
       <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
       <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
@@ -1548,6 +1553,18 @@
   .title {
     color: var(--pink); font-weight: 700; font-size: 15px;
     letter-spacing: 0.5px;
+  }
+  .web-mode-banner {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: #a5b4fc;
+    background: rgba(167, 139, 250, 0.1);
+    border: 1px solid rgba(167, 139, 250, 0.3);
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+    cursor: help;
   }
   nav { display: flex; gap: 1px; background: rgba(42, 42, 58, 0.3); border-radius: 6px; padding: 2px; }
   nav button {
