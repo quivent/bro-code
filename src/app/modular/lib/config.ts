@@ -15,7 +15,7 @@ export interface AgentConfig {
 
 export const defaultConfig: Partial<AgentConfig> = {
   promptFile: '~/gemma/prompt.md',
-  memoryFile: '~/lithos/gemma/memory/memory.json',
+  memoryFile: '~/gemma/memory/memory.json',
   includeExecAwareness: true,
   injectCap: 24000,
 };
@@ -53,6 +53,12 @@ export function createDefaultInvoke(): InvokeFn {
  *
  * Paths are virtualized (~/ stripped to a key prefix). Real server-side FS/tools
  * require a small companion backend (see web-backend/ idea below).
+ *
+ * PICKUP NOTE FOR OTHER SIDE / SERVER WORK:
+ * See the big "Web / Remote Server Frontend Mode" section in modular/README.md
+ * for full setup steps, limitations, and next actions (especially the companion
+ * backend for real run_shell + server FS).
+ * This function + the invoke() wrapper in App.svelte are the main entry points.
  */
 export function createWebInvoke(): InvokeFn {
   const LS_PREFIX = 'bro-web:';

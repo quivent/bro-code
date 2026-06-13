@@ -108,6 +108,76 @@ The monolith App.svelte has been significantly reduced; modular/ is now the prim
 
 Core agent and components are reusable for other apps (qwen etc.).
 
+---
+
+**Web / Remote Server Frontend Mode (June 2026 work)**
+
+Goal: Run the Vite + Svelte frontend as a standalone web app, ideally served from (or co-located with) the machine running the Gemma inference server. This enables fast iteration on the UI without full Tauri rebuilds, direct low-latency access to the model, and browser-based testing of the "Vite portion".
+
+**What was implemented:**
+- Added `createWebInvoke()` (in `modular/lib/config.ts`).
+  - Provides localStorage-backed persistence for settings (endpoints, temps, maxHistoryTurns, maxToolHistory, appearance, etc.).
+  - Virtual in-memory + LS "filesystem" for prompt.md, memory/*.json, context entries, transcripts.
+  - Sensible defaults so the app is immediately functional.
+  - run_shell returns clear demo output (with guidance).
+- Updated `invoke()` wrappers in `App.svelte` (main) and `settings-store.svelte.ts` so `!isTauri` automatically uses the rich web implementation instead of no-op.
+- Same changes applied to the gemma-code tree for bidirectional parity.
+- Console banner + setup tips when running in web mode.
+- Core chat (agent + direct fetch to /v1/chat/completions) already worked over HTTP; now memory, prompt, context (manual), transcripts, settings, etc. also persist nicely per-browser.
+
+**How to pick up / run on the server (the "other side"):**
+1. Get the code on the target machine (the one serving Gemma inference, e.g. on port 8091 or similar):
+   - rsync / scp / git the bro-code (or gemma-code) directory over.
+2. `cd bro-code && npm install`
+3. Run the Vite frontend visible on the network:
+   - Dev (fastest for iteration): `npm run dev -- --host 0.0.0.0 -p 5173`
+   - Built web app: `npm run build && npx serve dist -p 8080` (or nginx / your existing static server).
+4. From a browser on any machine on the LAN: `http://<server-ip>:5173`
+5. In the app's **Settings** tab:
+   - Use "Test" to validate.
+   - Set the active endpoint to the local Gemma server on that box (e.g. `http://127.0.0.1:8091/v1/chat/completions` or the exact URL you already use).
+   - All other settings (max history/tool turns, etc.) will save via the web layer.
+6. Test flows:
+   - Chat (solo + modes if enabled).
+   - Memory tab (edit + persist).
+   - Prompt editing.
+   - Context tab (add paths; manual content works via virtual FS; dir listings are mocked).
+   - Transcripts (auto-save + load).
+   - Exec approval UI (feedback, "always this session", reject guard) — the actual shell is demo-only.
+
+**Current web mode limitations (where to continue):**
+- `run_shell` / real `!sh` tools are mocked for safety (browser can't spawn shells). The full approval + feedback UX is there for testing.
+- Directory-based context (the `find` in loadContext) returns a demo string. Non-dir files work if you "add" them and feed content.
+- No native drag-drop (the Tauri webview plugin is guarded). Use the "Add path" + manual entry in ContextTab.
+- Paths like `~/bro` are virtualized to browser storage (per-origin). This is actually handy for isolated testing.
+- If you want **real server-side execution + shared FS** (so tools actually run on the Gemma host, transcripts live on disk server-side, etc.), the next logical step is a small companion backend.
+
+**Recommended next step for the other side / continuation:**
+- Scaffold a tiny backend (Express, Fastify, or even a Python Flask/FastAPI if the inference server is Python-based) on the same machine.
+  - Expose a POST /api/invoke that accepts `{cmd, args}` and implements the real Tauri-style commands using Node `fs`, `child_process.exec`, etc. (with allow-lists for safety on run_shell).
+  - Update `createWebInvoke` (or the main invoke) to optionally `fetch` that endpoint when a `webBackendUrl` env/setting is present.
+  - Serve the Vite static assets from the same backend.
+- This gives near-full parity while keeping the "co-located with Gemma" benefit.
+- See the comments inside `createWebInvoke()` for the virtual FS / setting keys — easy to mirror on the server side.
+- Also consider adding a visible "Web mode (localStorage)" banner in the header when `!isTauri`.
+
+**Entry points to pick up the work:**
+- `src/app/modular/lib/config.ts` → `createWebInvoke()` (the heart of web support).
+- `src/app/App.svelte` → the `invoke()` wrapper and the `!isTauri` branch + console guidance.
+- `src/app/modular/lib/settings-store.svelte.ts` → settings persistence in web.
+- Same files under the gemma-code tree (keep them in sync).
+- This README (you are here) and the console output when starting in web mode.
+
+The desktop Tauri experience is completely unaffected. This work was specifically to unblock testing the Vite frontend directly against the live model server.
+
+See also recent transcript naming / English title work and context feeding for other active threads.
+
+**Status:** Basic web mode is functional and ready for the "test it from there" use case. Full native backend is the clear next pick-up point.
+
+---
+
+Core agent and components are reusable for other apps (qwen etc.).
+
 **Cleanup status:** provider.ts removed. tsconfig fixed. VS now uses unified agent (with bro-shared fallback). Clear button, settings Test/TPS, dual exec, and most tab/agent lifting have full parity. Remaining hybrid host state for UI simplicity during final polish.
 
 **Key audit findings (via code reads + greps):**
