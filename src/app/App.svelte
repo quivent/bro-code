@@ -28,10 +28,12 @@
     setAgentContext,
     loadMemory as libLoadMemory,
     persistMemory as libPersistMemory,
+    addMemCell as libAddMemCell,
     loadPrompt as libLoadPrompt,
     savePrompt as libSavePrompt,
     loadContext as libLoadContext,
     buildApiMessages as libBuildApiMessages,
+    pruneHistoryForContext,
     getLocalOrigin,
     getLocalChatURL,
     hasLocalEndpoint as libHasLocal,
@@ -93,6 +95,7 @@
   import { invoke as tauriInvoke } from '@tauri-apps/api/core';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import { createWebInvoke } from './modular/lib/config';
 
   const ENDPOINT = config.endpoint; // legacy fallback
   const MODEL = config.model;       // legacy fallback
@@ -101,11 +104,18 @@
   // NOTE: Primary inference endpoint is now driven by the Settings tab (dynamic + persisted).
   // See activeEndpoint / currentEndpoint derived below and the SettingsTab render.
 
-  // Tauri invoke (falls back to no-op in browser)
-  const isTauri = '__TAURI_INTERNALS__' in window;
+  // Tauri invoke (falls back to capable web/browser implementation)
+  const isTauri = '__TAURI_INTERNALS__' in (typeof window !== 'undefined' ? window : {});
+  const webInvoke = createWebInvoke();
+
   async function invoke(cmd: string, args?: Record<string, unknown>): Promise<any> {
-    if (!isTauri) return null;
-    return tauriInvoke(cmd, args);
+    if (isTauri) {
+      return tauriInvoke(cmd, args);
+    }
+    // Rich web fallback: localStorage + virtual FS for prompt/memory/context/transcripts/settings.
+    // This makes the pure Vite web app fully testable when served from (or pointed at)
+    // the same machine as the Gemma inference server.
+    return webInvoke(cmd, args);
   }
 
   // Debug marker to prove this exact source is running (bypasses any caching doubts).
@@ -113,6 +123,10 @@
   if (typeof window !== 'undefined' && !(window as any).__bro_v1_logged) {
     (window as any).__bro_v1_logged = true;
     console.log('%c[bro-code v1] loaded at ' + new Date().toISOString(), 'color:#f0883e;font-weight:bold');
+    if (!isTauri) {
+      console.log('%c[bro-code] Running in WEB / browser mode (using localStorage virtual FS). Perfect for testing the Vite frontend co-located with your Gemma server.', 'color:#3fb6b2');
+      console.log('%c[bro-code] Serve with: npm run dev -- --host 0.0.0.0   or   npm run build + npx serve dist', 'color:#888');
+    }
   }
 
   // Proactively clean any bad/dev endpoints (e.g. pointing at :5314 Vite server causing completions 404s)
@@ -194,11 +208,21 @@
     }
   });
 
+  // Keep legacy dual rendering flag in sync with the canonical chatMode (so clicking Dual in the bar under chat actually switches the panes UI)
+  $effect(() => {
+    if (appSettings.chatMode === 'dual') {
+      dualMode = true;
+    } else if (appSettings.chatMode === 'solo') {
+      dualMode = false;
+    }
+  });
+
   // Supporting state for modular context / agent init (minimal for integration)
-  let ctxEntries: Array<{ kind: 'prompt' | 'memory' | 'file' | 'dir'; path: string }> = $state([
+  let ctxEntries: Array<{ kind: 'prompt' | 'memory' | 'file' | 'dir'; path: string; showInChat?: boolean }> = $state([
     { kind: 'prompt', path: PROMPT_FILE },
     { kind: 'memory', path: MEMORY_FILE },
   ]);
+  let shownCtx = $derived(ctxEntries.filter(e => e.showInChat));
   let systemContext = $state('');
   let ctxLoadStatus = $state('');
   let ctxAddPath = $state('');
@@ -219,15 +243,26 @@
 
   // Context window tracking + usage bar (imported from gemma-code's chat UI)
   // ctxWindow = server's max_model_len (probed from /v1/models on the active endpoint)
-  // ctxUsedTokens ~ chars/4 estimate of what will be sent next
-  // ctxPct for the visual bar
+  // ctxUsedTokens ~ chars/4 estimate of what will *actually* be sent next (after client-side sliding/prune per maxHistoryTurns).
+  // This gives you visibility and control over the context Gemma receives.
   let ctxWindow = $state<number | null>(null);
 
-  let ctxUsedTokens = $derived(
-    Math.ceil(
-      (messages.reduce((a, m) => a + ((m.content || '').length), 0) + (currentResponse || '').length) / 4
-    )
-  );
+  let ctxUsedTokens = $derived.by(() => {
+    let hist = messages.map(m => ({ role: m.role, content: m.content, thinking: m.thinking, exec: m.exec }));
+    const maxT = appSettings.maxHistoryTurns || 0;
+    const maxTools = appSettings.maxToolHistory || 0;
+    if (maxT > 0 || maxTools > 0) {
+      hist = pruneHistoryForContext(hist, maxT, maxTools);
+    }
+    // Include the injected base (systemContext = prompt + memory + marked ctx files + exec awareness)
+    // + pruned chat turns + tool outputs (for retained !sh awareness) + live streaming response.
+    // This makes the bar show the *actual* approx tokens for the next request (chars/4 estimate).
+    let chars = (systemContext || '').length;
+    chars += hist.reduce((a, m) => a + ((m.content || '').length), 0);
+    chars += hist.reduce((a, m) => a + ((m.exec?.output || '').length), 0);
+    chars += ((currentResponse || '').length);
+    return Math.ceil(chars / 4);
+  });
   let ctxPct = $derived(ctxWindow ? Math.min(100, (ctxUsedTokens / ctxWindow) * 100) : 0);
 
   async function probeCtxWindow() {
@@ -297,7 +332,7 @@
     const t = p.trim();
     if (!t || ctxEntries.some(e => e.path === t)) return;
     const kind: any = /\.[A-Za-z0-9]{1,8}$/.test(t) ? 'file' : 'dir';
-    ctxEntries = [...ctxEntries, { kind, path: t }];
+    ctxEntries = [...ctxEntries, { kind, path: t, showInChat: false }];
     saveCtxSettings();
   }
 
@@ -312,7 +347,7 @@
       for (const p of picks) {
         const t = (p as string).trim();
         if (!t || ctxEntries.some(e => e.path === t)) continue;
-        ctxEntries = [...ctxEntries, { kind: directory ? 'dir' : 'file', path: t }];
+        ctxEntries = [...ctxEntries, { kind: directory ? 'dir' : 'file', path: t, showInChat: false }];
       }
       if (picks.length) saveCtxSettings();
     } catch (e: any) { ctxLoadStatus = `picker error: ${e}`; }
@@ -333,6 +368,31 @@
     saveCtxSettings();
   }
 
+  function toggleShowInChat(i: number) {
+    const list = [...ctxEntries];
+    list[i] = { ...list[i], showInChat: !list[i].showInChat };
+    ctxEntries = list;
+    saveCtxSettings();
+  }
+
+  async function feedMarkedContext() {
+    await loadContext();
+    // Marked ones (with showInChat) will render in the .shown-ctx section in the chat area above messages.
+    // They are also preferentially retained in the sliding context (maxToolHistory in settings).
+    // The actual system injection happens automatically on send via the agent.
+    ctxLoadStatus = 'Marked context fed (visible above + in next prompt to Gemma)';
+    setTimeout(() => { ctxLoadStatus = ''; }, 2200);
+  }
+
+  function refreshContext() {
+    loadContext();
+  }
+
+  function clearShown() {
+    ctxEntries = ctxEntries.map(e => ({...e, showInChat: false}));
+    saveCtxSettings();
+  }
+
   async function saveCtxSettings() {
     if (!isTauri) return;
     await invoke('set_setting', { key: 'ctxEntries', value: JSON.stringify(ctxEntries) }).catch(() => {});
@@ -341,7 +401,12 @@
   async function loadCtxSettings() {
     try {
       const raw = await invoke('get_setting', { key: 'ctxEntries' });
-      if (raw) ctxEntries = JSON.parse(raw as string);
+      if (raw) {
+        ctxEntries = JSON.parse(raw as string).map((e: any) => ({
+          ...e,
+          showInChat: e.showInChat ?? false
+        }));
+      }
     } catch {}
     loadContext();
     void initUnifiedAgent();
@@ -395,9 +460,15 @@
 
   // Memory state
   let memoryJson = $state('');
+  let memRaw: Record<string, any> = $state({});
   let memCells: Array<{key: string; value: string; tags?: string[]; pinned?: boolean; anchored?: boolean}> = $state([]);
   let memStatus = $state('');
   let memLoaded = $state(false);
+  let editingKey: string | null = $state(null);
+  let editKey = $state('');
+  let editValue = $state('');
+  let editTags = $state('');
+  let newCellKey = $state('');
 
   // Terminal state
   let termInput = $state('');
@@ -520,6 +591,17 @@
     try {
       const uAgent = unifiedAgent || await initUnifiedAgent();
 
+      // Client-side context sliding / pruning.
+      // Gives explicit control over how much history is submitted in the request to the model.
+      // Complements the server's max_model_len sliding (if any). Prevents runaway context size
+      // from long sessions or repeated !sh + feedback loops.
+      let historyForModel = messages.map(m => ({ role: m.role, content: m.content, thinking: m.thinking, exec: m.exec }));
+      const maxTurns = appSettings.maxHistoryTurns || 0;
+      const maxTools = appSettings.maxToolHistory || 0;
+      if (maxTurns > 0 || maxTools > 0) {
+        historyForModel = pruneHistoryForContext(historyForModel, maxTurns, maxTools);
+      }
+
       const result = await uAgent.send(text, {
         onUpdate: (partial: any) => {
           currentResponse = partial.response || '';
@@ -528,8 +610,8 @@
           scrollToBottom(chatContainer);
         },
         onExecApproval: (cmd: string) => requestApproval(cmd),
-        // Pass history so the agent owns the full loop (including previous exec results, memory injection via its context, etc.)
-        history: messages.map(m => ({ role: m.role, content: m.content, thinking: m.thinking, exec: m.exec })),
+        // Pass (possibly pruned) history so the agent owns the full loop...
+        history: historyForModel,
         // Always pass the live endpoints from the settings store. This ensures the agent's
         // send/streamTurn uses the current (cleaned + normalized) active endpoint URL for the
         // completions POST, even if the agent was created earlier. Prevents stale .url values
@@ -617,6 +699,7 @@
         memoryJson = '{}';
       }
       const parsed = JSON.parse(memoryJson);
+      memRaw = parsed;
       memCells = Object.entries(parsed).map(([key, val]: [string, any]) => {
         const tags: string[] = val.tags || [];
         return {
@@ -634,6 +717,61 @@
       memStatus = `error: ${e}`;
       memLoaded = true;
     }
+  }
+
+  function startEditCell(cell: {key: string; value: string; tags?: string[]}) {
+    editingKey = cell.key;
+    editKey = cell.key;
+    const raw = memRaw[cell.key] || {};
+    editValue = typeof raw.value === 'string' ? raw.value : cell.value || '';
+    editTags = (raw.tags || cell.tags || []).join(', ');
+  }
+
+  async function persistMemory() {
+    if (!isTauri) { memStatus = 'editing requires Tauri'; return; }
+    try {
+      await libPersistMemory({ invoke, memoryFile: MEMORY_FILE }, memRaw);
+      await loadMemory();
+      memStatus = 'saved';
+      setTimeout(() => { memStatus = ''; }, 2000);
+      if (unifiedAgent && unifiedAgent.loadAll) await unifiedAgent.loadAll(ctxEntries);
+    } catch (e: any) { memStatus = `error: ${e}`; }
+  }
+
+  async function saveMemCell() {
+    if (!editingKey) return;
+    const newKey = editKey.trim().replace(/\s+/g, '_') || editingKey;
+    if (newKey !== editingKey && memRaw[newKey]) { memStatus = 'key exists'; return; }
+    const prev = memRaw[editingKey] || {};
+    const cell = {
+      key: newKey,
+      value: editValue,
+      tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+      updated: new Date().toISOString(),
+      reads: typeof prev.reads === 'number' ? prev.reads : 0,
+      writes: (typeof prev.writes === 'number' ? prev.writes : 0) + 1,
+    };
+    memRaw = { ...memRaw, [newKey]: cell };
+    if (newKey !== editingKey) delete memRaw[editingKey];
+    await persistMemory();
+    editingKey = null;
+  }
+
+  async function addMemCell() {
+    const key = newCellKey.trim().replace(/\s+/g, '_');
+    if (!key) return;
+    if (memRaw[key]) { memStatus = 'key exists'; return; }
+    memRaw = libAddMemCell(memRaw, key);
+    await persistMemory();
+    newCellKey = '';
+    startEditCell({ key, value: '', tags: [] });
+  }
+
+  function cancelEditCell() {
+    editingKey = null;
+    editKey = '';
+    editValue = '';
+    editTags = '';
   }
 
   // ── Terminal ──
@@ -715,23 +853,164 @@
   let transcriptContent: Array<{role: string; content: string; ts?: string}> = $state([]);
 
   // Auto-save transcript after each assistant reply
+  // Current session identifier for continuation (not used in filename anymore).
   let sessionId = Date.now().toString(36);
+
+  // The human English title for the *current active* transcript file.
+  // When non-null, saves go to `${title}.json` (nice name, no dates/sids).
+  // Set when loading a transcript, or auto-generated on first save of a fresh chat.
+  let currentTranscriptTitle: string | null = $state(null);
+
+  function generateTranscriptTitle(raw: any): string {
+    if (!raw) return 'Untitled Conversation';
+
+    let msgs: any[] = [];
+    if (Array.isArray(raw)) {
+      msgs = raw;
+    } else if (raw.turns) {
+      msgs = raw.turns.map((t: any) => ({
+        role: t.human ? 'user' : (t.speaker === 'Josh' ? 'user' : 'assistant'),
+        content: t.text || ''
+      }));
+    } else if (raw.text) {
+      return 'Synthesis';
+    } else if (raw.topic) {
+      return raw.topic.length > 60 ? raw.topic.slice(0, 57) + '…' : raw.topic;
+    } else {
+      return 'Transcript';
+    }
+
+    // Find first real user message for context
+    const firstUser = msgs.find((m: any) => m.role === 'user' && m.content && m.content.trim().length > 2);
+    let base = firstUser?.content || msgs[0]?.content || 'Conversation';
+
+    base = String(base).replace(/\s+/g, ' ').trim();
+
+    // Use first "thought" / sentence
+    let title = base.split(/[.!?\n]/)[0].trim();
+    if (title.length < 6) title = base.slice(0, 70).trim();
+    if (title.length > 65) title = title.slice(0, 62) + '…';
+
+    // Light title casing
+    title = title.replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+    // Context-based overrides for known deep threads
+    const lower = (JSON.stringify(raw) + base).toLowerCase();
+    if (lower.includes('origin') || lower.includes('initial') && msgs.length < 6) return 'Origin';
+    if (lower.includes('synthesis') || lower.includes('core positions') || lower.includes('kv cache') && lower.includes('continuity')) return 'The Synthesis';
+    if (lower.includes('dialogue') || (msgs.length > 10 && lower.includes('back and forth'))) return 'Dialogue';
+    if (lower.includes('live') && lower.includes('synthesis')) return 'Live Synthesis';
+    if (lower.includes('journey')) return 'The Journey';
+
+    return title || 'Untitled Session';
+  }
 
   async function saveTranscript() {
     if (!isTauri || messages.length < 2) return;
     await invoke('run_shell', { cmd: `mkdir -p ${config.homeDir}/transcripts` }).catch(() => {});
-    const path = `${config.homeDir}/transcripts/${new Date().toISOString().slice(0,10)}_${sessionId}.json`;
+
+    // New English-only naming schema (no dates, no sids in the filename):
+    //   The file is named after a human-readable English title generated from the conversation context
+    //   (first user message, or topic for synthesis, with special overrides like "Origin", "The Synthesis", "The Journey").
+    //   Example: "Origin.json", "The Journey.json", "Restoring Gemma Code.json"
+    //
+    // currentTranscriptTitle is set either:
+    //   - When you load an existing transcript into chat (continue editing that named thread)
+    //   - Or auto-generated from the first message on a fresh chat
+    //
+    // This replaces all previous date_ + hex naming. Regressive migration happens on loadTranscripts.
+    if (!currentTranscriptTitle) {
+      currentTranscriptTitle = generateTranscriptTitle(messages);
+    }
+
+    // Sanitize for filesystem while keeping it readable (spaces are fine on macOS)
+    let safe = currentTranscriptTitle.replace(/[\/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!safe) safe = 'Untitled Transcript';
+    const path = `${config.homeDir}/transcripts/${safe}.json`;
+
     const data = JSON.stringify(messages.map(m => ({ ...m, ts: new Date().toISOString() })), null, 2);
     await invoke('write_file', { path, content: data }).catch(() => {});
   }
 
   async function loadTranscripts() {
+    const dir = `${config.homeDir}/transcripts`;
+
+    // Regressive application of the *English naming schema* (user preference: no dates/data).
+    // Any file whose current name looks "data-like" (starts with YYYY-MM-DD_, is a bare short sid,
+    // or is/was a special like synthesis/origin/dialogue/LIVE-*) gets renamed on disk to a nice
+    // English title generated from its actual content/context (first user message, topic, or
+    // special detection like "Origin", "The Synthesis", "The Journey").
+    //
+    // Examples of resulting names:
+    //   "Origin.json", "The Synthesis.json", "Dialogue.json",
+    //   "Restoring Gemma Code.json", "Whats the Mission.json", "The Journey.json"
+    //
+    // This is applied automatically on load/reload so all historical transcripts (including
+    // the ones from the previous date-based migration) get cleaned up.
+    // Safe and idempotent — once a file has a nice English name it is left alone.
     try {
-      const raw = await invoke('run_shell', { cmd: `ls -t ${config.homeDir}/transcripts/*.json 2>/dev/null | head -20` }) || '';
+      const listRaw = await invoke('run_shell', { cmd: `ls -1 ${dir}/*.json 2>/dev/null || true` }) || '';
+      let allFiles = listRaw.trim().split('\n').filter((l: string) => l && l.endsWith('.json'));
+
+      for (const oldPath of allFiles) {
+        const bn = oldPath.split('/').pop() || '';
+        const currentName = bn.replace(/\.json$/, '');
+
+        // Detect "needs English name" — old date_ style, bare hex sid, or known specials
+        const needsRename =
+          /^\d{4}-\d{2}-\d{2}/.test(currentName) ||
+          /^[a-z0-9]{6,12}$/i.test(currentName) ||
+          /synthesis|origin|dialogue|LIVE/i.test(currentName) ||
+          currentName.length < 5;
+
+        if (!needsRename) continue;
+
+        // Read content to generate context-based title
+        let rawContent: any = [];
+        try {
+          const contentStr = await invoke('read_file', { path: oldPath }) || '[]';
+          rawContent = JSON.parse(contentStr);
+        } catch {}
+
+        let niceTitle = generateTranscriptTitle(rawContent);
+
+        // Extra hard overrides for the known special files based on their historical context
+        const lowerBn = currentName.toLowerCase();
+        if (lowerBn.includes('origin')) niceTitle = 'Origin';
+        else if (lowerBn.includes('synthesis') && !lowerBn.includes('live')) niceTitle = 'The Synthesis';
+        else if (lowerBn.includes('dialogue')) niceTitle = 'Dialogue';
+        else if (lowerBn.includes('live-synthesis')) niceTitle = 'Live Synthesis';
+        else if (lowerBn.includes('live-session')) niceTitle = 'Live Session';
+
+        // Sanitize for filename (spaces ok, strip bad chars)
+        let safe = niceTitle.replace(/[\/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!safe) safe = 'Transcript ' + Date.now().toString(36).slice(-4);
+
+        const newPath = `${dir}/${safe}.json`;
+
+        if (newPath !== oldPath) {
+          // Avoid overwrite if a file with that nice name already exists
+          const exists = await invoke('run_shell', { cmd: `test -f "${newPath}" && echo yes || echo no` }).catch(() => 'no');
+          let finalPath = newPath;
+          if (exists.trim() === 'yes') {
+            finalPath = `${dir}/${safe} (${Date.now().toString(36).slice(-4)}).json`;
+          }
+          await invoke('run_shell', { cmd: `mv "${oldPath}" "${finalPath}" 2>/dev/null || true` }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
+    // Fresh list after possible renames. Name is now the English title.
+    try {
+      const raw = await invoke('run_shell', { cmd: `ls -t ${dir}/*.json 2>/dev/null | head -40` }) || '';
       transcripts = raw.trim().split('\n').filter((l: string) => l).map((path: string) => {
-        const name = path.split('/').pop()?.replace('.json', '') || path;
-        const date = name.slice(0, 10);
-        return { name, path, date };
+        const bn = path.split('/').pop() || '';
+        const name = bn.replace(/\.json$/, '');
+        // No more date in the primary schema; keep a lightweight one for sorting/display if present in old metadata
+        const date = ''; // intentionally no data-based display per user request
+        return { name, path, date, sessionId: name }; // use the title as the identifier too
       });
       transcriptsStatus = '';
     } catch (e: any) { transcriptsStatus = `error: ${e}`; }
@@ -769,7 +1048,15 @@
     // Load the transcript into the active chat
     const filtered = transcriptContent.filter(m => m.role === 'user' || m.role === 'assistant');
     messages = filtered.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    sessionId = Date.now().toString(36); // new session for further saves
+
+    // With the English naming schema, the "name" *is* the nice title of the transcript file.
+    // Set it as the current one so that subsequent saves continue updating this exact
+    // human-named file (e.g. further turns on "The Journey").
+    currentTranscriptTitle = t.name || null;
+
+    // Keep a sessionId for any legacy internal uses (we can phase it out).
+    sessionId = t.sessionId || t.name || Date.now().toString(36);
+
     activeTab = 'chat';
   }
 
@@ -798,21 +1085,18 @@
   <header>
     <span class="title">{config.name}</span>
     <nav>
-      <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>chat</button>
-      <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>prompt</button>
-      <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>memory</button>
-      <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>tools</button>
-      <button class:active={activeTab === 'transcripts'} onclick={() => activeTab = 'transcripts'}>transcripts</button>
-      <button class:active={activeTab === 'terminal'} onclick={() => activeTab = 'terminal'}>terminal</button>
-      <button class:active={activeTab === 'context'} onclick={() => activeTab = 'context'}>context</button>
-      <button class:active={activeTab === 'kv'} onclick={() => activeTab = 'kv'}>kv</button>
-      <button class:active={activeTab === 'source'} onclick={() => activeTab = 'source'}>source</button>
-      <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>settings</button>
-      {#if ENDPOINTS.length >= 2}
-        <button onclick={() => dualMode = !dualMode}>{dualMode ? 'single' : 'dual'}</button>
-      {/if}
+      <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
+      <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
+      <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
+      <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
+      <button class:active={activeTab === 'transcripts'} onclick={() => activeTab = 'transcripts'}>Transcripts</button>
+      <button class:active={activeTab === 'terminal'} onclick={() => activeTab = 'terminal'}>Terminal</button>
+      <button class:active={activeTab === 'context'} onclick={() => activeTab = 'context'}>Context</button>
+      <button class:active={activeTab === 'kv'} onclick={() => activeTab = 'kv'}>KV</button>
+      <button class:active={activeTab === 'source'} onclick={() => activeTab = 'source'}>Source</button>
+      <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
       {#if activeTab === 'chat'}
-        <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'chat only' : 'chat+term'}</button>
+        <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
       {/if}
     </nav>
     <span class="meta">
@@ -826,12 +1110,30 @@
 
   <!-- Chat Tab -->
   {#if activeTab === 'chat'}
+  <!-- Modes listed directly underneath chat (Solo / Dual / VS / Supervision), ported from gemma-code ChatComposer chat-mode-bar -->
+  <div class="chat-mode-bar">
+    <button class:active={appSettings.chatMode === 'solo'} onclick={() => { appSettings.chatMode = 'solo'; dualMode = false; }}>Solo</button>
+    <button class:active={appSettings.chatMode === 'dual'} onclick={() => { appSettings.chatMode = 'dual'; dualMode = true; }}>Dual</button>
+    <button class:active={appSettings.chatMode === 'vs'} onclick={() => { appSettings.chatMode = 'vs'; dualMode = false; }}>VS (crosstalk)</button>
+    <button class:active={appSettings.chatMode === 'supervision'} onclick={() => { appSettings.chatMode = 'supervision'; dualMode = false; }}>Supervision</button>
+  </div>
   {#if chatTermSplit}
   <!-- Minimal chat + terminal split screen -->
   <div class="split" style="display: flex; flex: 1; overflow: hidden;">
     <!-- Left: chat -->
     <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
       <main class="chat-main" bind:this={chatContainer} style="flex: 1;">
+        {#if shownCtx.length}
+          <div class="shown-ctx">
+            <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
+            {#each shownCtx as c}
+              <div class="shown-ctx-item" title={c.path}>
+                <span class="kind {c.kind}">{c.kind}</span>
+                <span class="p">{c.path}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
         {#if messages.length === 0 && !streaming}
           <div class="splash">
             <pre class="logo">{config.logo.join('\n')}</pre>
@@ -842,7 +1144,7 @@
           {#if msg.exec}
             <div class="exec-card {msg.exec.approved ? 'ran' : 'denied'}">
               <div class="exec-cmd"><span class="exec-ps">$</span> {msg.exec.cmd}</div>
-              <pre class="exec-out">{msg.exec.approved ? msg.exec.output : 'denied'}</pre>
+              <pre class="exec-out">{msg.exec.output || (msg.exec.approved ? '' : 'denied')}</pre>
             </div>
           {:else}
           <div class="message {msg.role}">
@@ -907,8 +1209,8 @@
       </div>
     </div>
   </div>
-  {:else if ENDPOINTS.length >= 2 && dualMode}
-  <!-- Dual pane using shared component -->
+  {:else if ENDPOINTS.length >= 2 && (dualMode || appSettings.chatMode === 'dual')}
+  <!-- Dual pane using shared component (activated via the modes bar under chat or legacy flag) -->
   <div class="split">
     <DualPane 
       pane={dualState.left} 
@@ -926,6 +1228,23 @@
   </div>
   {:else}
   <main class="chat-main" bind:this={chatContainer}>
+    {#if shownCtx.length}
+      <div class="shown-ctx">
+        <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
+        {#each shownCtx as c}
+          <div class="shown-ctx-item" title={c.path}>
+            <span class="kind {c.kind}">{c.kind}</span>
+            <span class="p">{c.path}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    {#if appSettings.chatMode !== 'solo'}
+      <div class="mode-indicator" title="Multi modes (dual/vs/supervision) activate alternative layouts where wired. Send and custom ctx feeding currently use the solo agent path.">
+        mode: <strong>{appSettings.chatMode}</strong>
+        {#if appSettings.chatMode === 'dual'}(shared dual panes){:else if appSettings.chatMode === 'vs' || appSettings.chatMode === 'supervision'}(see composer or gemma variant for full panes/crosstalk){/if}
+      </div>
+    {/if}
     {#if messages.length === 0 && !streaming}
       <div class="splash">
         <pre class="logo">{config.logo.join('\n')}</pre>
@@ -936,7 +1255,7 @@
       {#if msg.exec}
         <div class="exec-card {msg.exec.approved ? 'ran' : 'denied'}">
           <div class="exec-cmd"><span class="exec-ps">$</span> {msg.exec.cmd}</div>
-          <pre class="exec-out">{msg.exec.approved ? msg.exec.output : 'denied'}</pre>
+          <pre class="exec-out">{msg.exec.output || (msg.exec.approved ? '' : 'denied')}</pre>
         </div>
       {:else}
       <div class="message {msg.role}">
@@ -985,7 +1304,7 @@
     <!-- Context bar placed in the footer (lowered towards the bottom, above the input).
          This is the position matching the gemma-code composer structure, which puts it right in the input area at the very bottom of the UI.
          Added a small margin-bottom so it's not jammed flush against the textarea (a bit of breathing room / "higher" from the absolute input edge). -->
-    <div class="ctx-bar" style="margin-bottom: 6px;" title="Context usage for the next request (history + response so far). Estimated at ~4 chars per token. Window probed from the active inference server's /v1/models response (max_model_len or similar). Use Test in Settings to help populate the window size.">
+    <div class="ctx-bar" style="margin-bottom: 6px;" title="Context usage for the next request (after client-side sliding per maxHistoryTurns + maxToolHistory). Estimated at ~4 chars per token. Tool usage results are preferentially retained. Window probed from the active inference server's /v1/models (max_model_len). Use Test in Settings to help populate the window size. Control in Settings &gt; Agent.">
       <span class="ctx-label">ctx</span>
       <div class="ctx-track">
         <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow ? Math.max(ctxPct, 1.5) : 0}%"></div>
@@ -998,6 +1317,15 @@
         {/if}
       </div>
     </div>
+
+    <!-- Buttons at the bottom to feed / manage context shown in chat (marked via Context tab).
+         "Feed" reloads the marked entries (so latest disk content is used) and ensures they are visible. -->
+    <div class="feed-ctx-row">
+      <button class="feed-btn" onclick={feedMarkedContext} disabled={!shownCtx.length}>Feed marked context</button>
+      <button class="feed-btn" onclick={refreshContext}>Refresh context</button>
+      <button class="feed-btn" onclick={clearShown} disabled={!shownCtx.length}>Clear shown</button>
+    </div>
+
     <div class="input-row">
       <textarea bind:this={inputEl} bind:value={inputText} onkeydown={chatKeydown}
         placeholder={`talk to ${config.name}...`} rows="2" disabled={streaming}></textarea>
@@ -1024,32 +1352,22 @@
     </div>
   </main>
 
-  <!-- Memory Tab -->
+  <!-- Memory Tab (modular, with full editing from gemma-code) -->
   {:else if activeTab === 'memory'}
-  <main class="editor-main">
-    <div class="editor-header">
-      <span>{config.homeDir}/memory.json</span>
-      <span class="meta">{memCells.length} cells</span>
-      {#if memStatus}<span class="status">{memStatus}</span>{/if}
-      <button class="reload-btn" onclick={loadMemory}>reload</button>
-    </div>
-    <div class="memory-list">
-      {#each memCells as cell}
-        <div class="mem-cell">
-          <div class="mem-key">
-            {cell.key}
-            {#if cell.pinned}<span class="badge pin">📌</span>{/if}
-            {#if cell.anchored}<span class="badge anchor">⚓</span>{/if}
-            {#if cell.tags?.length}<span class="mem-tags">{cell.tags.join(', ')}</span>{/if}
-          </div>
-          <div class="mem-value">{cell.value.length > 200 ? cell.value.slice(0, 200) + '…' : cell.value}</div>
-        </div>
-      {/each}
-      {#if !memCells.length}
-        <div class="empty">(no memory cells)</div>
-      {/if}
-    </div>
-  </main>
+  <MemoryTab
+    memStatus={memStatus}
+    editingKey={editingKey}
+    editKey={editKey}
+    editValue={editValue}
+    editTags={editTags}
+    newCellKey={newCellKey}
+    onLoad={loadMemory}
+    onPersist={persistMemory}
+    onStartEdit={startEditCell}
+    onSaveCell={saveMemCell}
+    onCancelEdit={cancelEditCell}
+    onAddCell={addMemCell}
+  />
 
   <!-- Tools Tab -->
   {:else if activeTab === 'tools'}
@@ -1126,7 +1444,7 @@
         {#each transcripts as t}
           <div class="transcript-row" onclick={() => viewTranscript(t)}>
             <span class="transcript-name">{t.name}</span>
-            <span class="transcript-date">{t.date}</span>
+            <!-- English naming only — no dates or machine ids in the schema -->
           </div>
         {/each}
         {#if !transcripts.length}<div class="empty">(no transcripts yet — they save automatically)</div>{/if}
@@ -1170,6 +1488,7 @@
     onDropReorder={ctxDrop}
     onPickFile={pickCtxFile}
     onAddPath={addCtxPath}
+    onToggleShowInChat={toggleShowInChat}
   />
 
   <!-- Settings Tab: dynamic multi-endpoint management (add/edit/reorder/test/+Local, persisted via Tauri DB).
@@ -1324,6 +1643,72 @@
   .ctx-fill.warn { background: #fbbf24; }
   .ctx-fill.crit { background: #f87171; }
   .ctx-text { font-size: 10px; }
+
+  .shown-ctx {
+    margin: 8px 12px 4px;
+    padding: 6px 10px;
+    background: rgba(167, 139, 250, 0.06);
+    border: 1px solid rgba(167, 139, 250, 0.2);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .shown-ctx-head {
+    font-size: 10px;
+    color: var(--lavend);
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+  }
+  .shown-ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-family: var(--font-mono);
+  }
+  .shown-ctx-item .p {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+  }
+
+  .feed-ctx-row {
+    display: flex;
+    gap: 6px;
+    padding: 0 12px 4px;
+    flex-wrap: wrap;
+  }
+  .feed-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(28, 33, 40, 0.6);
+    border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-mono);
+  }
+  .feed-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .mode-indicator {
+    font-size: 10px;
+    color: var(--dim);
+    font-family: var(--font-mono);
+    margin: 2px 0 8px;
+    padding: 1px 6px;
+    background: rgba(42,42,58,0.25);
+    border-radius: 3px;
+    display: inline-block;
+  }
+  .mode-indicator strong { color: var(--lavend); font-weight: 600; }
+
+  /* chat-mode-bar: modes listed directly underneath chat (Solo/Dual/VS/Supervision).
+     Matches gemma-code's .chat-mode-bar in ChatComposer for consistent "under chat" UX. */
+  .chat-mode-bar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid rgba(42,42,58,0.4); }
+  .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; }
+  .chat-mode-bar button.active { background: var(--bg-elevated); color: var(--text); border-color: rgba(167,139,250,0.4); }
+  .chat-mode-bar button:hover { color: var(--text); }
 
   /* Editor tabs (Context / Prompt / Memory / Source / Kv / etc.)
      Ported from gemma-code reference (~/.worktrees/unified-pkg/src/app/App.svelte).
