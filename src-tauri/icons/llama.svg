@@ -1,0 +1,198 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Main body gradient -->
+    <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7e8d5"/>
+      <stop offset="30%" stop-color="#e8d4bc"/>
+      <stop offset="70%" stop-color="#d4b896"/>
+      <stop offset="100%" stop-color="#c4a67a"/>
+    </linearGradient>
+    <!-- Darker shade for depth -->
+    <linearGradient id="shadowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d4b896"/>
+      <stop offset="100%" stop-color="#a6876a"/>
+    </linearGradient>
+    <!-- Light highlight -->
+    <linearGradient id="highlightGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f5e6d3"/>
+      <stop offset="100%" stop-color="#fff8f0"/>
+    </linearGradient>
+    <!-- Nose/snout -->
+    <linearGradient id="noseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d4b896"/>
+      <stop offset="100%" stop-color="#b8956c"/>
+    </linearGradient>
+    <!-- Tech accent -->
+    <linearGradient id="techGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <!-- Inner ear -->
+    <linearGradient id="earInnerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f0c9b0"/>
+      <stop offset="100%" stop-color="#dba090"/>
+    </linearGradient>
+    <!-- Radial for wool texture -->
+    <radialGradient id="woolSpot" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff8f0" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#f5e6d3" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle (optional, remove if you want transparent) -->
+  <circle cx="256" cy="256" r="240" fill="#1a1a2e" opacity="0.95"/>
+  <circle cx="256" cy="256" r="235" fill="none" stroke="url(#techGrad)" stroke-width="3" opacity="0.5"/>
+
+  <!-- BODY - Main woolly body -->
+  <ellipse cx="280" cy="320" rx="120" ry="90" fill="url(#bodyGrad)"/>
+  <!-- Body shadow/depth -->
+  <ellipse cx="290" cy="340" rx="100" ry="70" fill="url(#shadowGrad)" opacity="0.3"/>
+  <!-- Body highlight -->
+  <ellipse cx="260" cy="290" rx="80" ry="50" fill="url(#highlightGrad)" opacity="0.4"/>
+
+  <!-- Wool texture spots on body -->
+  <circle cx="220" cy="300" r="25" fill="url(#woolSpot)"/>
+  <circle cx="260" cy="280" r="20" fill="url(#woolSpot)"/>
+  <circle cx="300" cy="290" r="22" fill="url(#woolSpot)"/>
+  <circle cx="340" cy="310" r="18" fill="url(#woolSpot)"/>
+  <circle cx="240" cy="340" r="20" fill="url(#woolSpot)"/>
+  <circle cx="280" cy="350" r="18" fill="url(#woolSpot)"/>
+  <circle cx="320" cy="340" r="22" fill="url(#woolSpot)"/>
+  <circle cx="200" cy="330" r="15" fill="url(#woolSpot)"/>
+  <circle cx="360" cy="330" r="15" fill="url(#woolSpot)"/>
+
+  <!-- NECK - Long graceful neck -->
+  <path d="M200 280
+           Q180 240 170 180
+           Q165 140 175 110
+           Q185 85 200 75"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <!-- Neck - back edge -->
+  <path d="M240 260
+           Q230 220 225 170
+           Q222 130 230 100
+           Q238 80 250 72"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <!-- Neck fill -->
+  <path d="M200 280
+           Q180 240 170 180
+           Q165 140 175 110
+           Q185 85 200 75
+           L250 72
+           Q238 80 230 100
+           Q222 130 225 170
+           Q230 220 240 260
+           Z"
+        fill="url(#bodyGrad)"/>
+  <!-- Neck fur texture -->
+  <path d="M185 200 Q190 195 188 185" stroke="#c4a67a" stroke-width="2" fill="none" opacity="0.5"/>
+  <path d="M190 160 Q195 155 193 145" stroke="#c4a67a" stroke-width="2" fill="none" opacity="0.5"/>
+  <path d="M195 130 Q200 125 198 115" stroke="#c4a67a" stroke-width="2" fill="none" opacity="0.5"/>
+  <path d="M225 180 Q220 175 222 165" stroke="#c4a67a" stroke-width="2" fill="none" opacity="0.5"/>
+  <path d="M228 140 Q223 135 225 125" stroke="#c4a67a" stroke-width="2" fill="none" opacity="0.5"/>
+
+  <!-- HEAD -->
+  <ellipse cx="225" cy="65" rx="55" ry="40" fill="url(#bodyGrad)"/>
+  <!-- Head highlight -->
+  <ellipse cx="215" cy="55" rx="35" ry="25" fill="url(#highlightGrad)" opacity="0.5"/>
+
+  <!-- SNOUT/MUZZLE - Distinctive llama snout -->
+  <ellipse cx="175" cy="80" rx="35" ry="28" fill="url(#noseGrad)"/>
+  <!-- Snout highlight -->
+  <ellipse cx="170" cy="72" rx="20" ry="15" fill="url(#highlightGrad)" opacity="0.4"/>
+  <!-- Nostrils -->
+  <ellipse cx="152" cy="82" rx="6" ry="8" fill="#8b6914" opacity="0.7"/>
+  <ellipse cx="165" cy="85" rx="5" ry="7" fill="#8b6914" opacity="0.6"/>
+  <!-- Mouth line -->
+  <path d="M148 95 Q165 100 180 95" stroke="#8b6914" stroke-width="2" fill="none" opacity="0.6"/>
+
+  <!-- EARS - Tall banana-shaped llama ears -->
+  <!-- Left ear (back) -->
+  <path d="M200 45
+           Q185 20 175 -5
+           Q172 -15 180 -10
+           Q200 5 210 30
+           Q215 40 210 50
+           Z"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <path d="M195 35 Q188 15 183 0" fill="url(#earInnerGrad)" stroke="none" opacity="0.6"/>
+
+  <!-- Right ear (front) -->
+  <path d="M245 35
+           Q265 5 275 -25
+           Q280 -40 285 -30
+           Q280 0 265 30
+           Q258 45 250 50
+           Z"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <!-- Inner ear detail -->
+  <path d="M252 30 Q268 5 275 -15" stroke="url(#earInnerGrad)" stroke-width="8" fill="none" opacity="0.7"/>
+
+  <!-- EYES - Large expressive llama eyes -->
+  <!-- Eye socket shadow -->
+  <ellipse cx="210" cy="60" rx="18" ry="15" fill="#a6876a" opacity="0.3"/>
+  <!-- Eye white -->
+  <ellipse cx="212" cy="58" rx="14" ry="12" fill="#fff"/>
+  <!-- Iris -->
+  <ellipse cx="210" cy="59" rx="10" ry="10" fill="#3d2914"/>
+  <!-- Pupil -->
+  <ellipse cx="208" cy="59" rx="5" ry="6" fill="#1a0f05"/>
+  <!-- Eye highlight -->
+  <circle cx="215" cy="54" r="4" fill="#fff"/>
+  <circle cx="205" cy="62" r="2" fill="#fff" opacity="0.6"/>
+  <!-- Eyelashes -->
+  <path d="M198 50 Q195 45 192 48" stroke="#5a4030" stroke-width="2" fill="none"/>
+  <path d="M203 48 Q202 42 198 44" stroke="#5a4030" stroke-width="2" fill="none"/>
+  <path d="M210 47 Q212 41 208 42" stroke="#5a4030" stroke-width="2" fill="none"/>
+
+  <!-- LEGS - Four sturdy legs -->
+  <!-- Front left leg -->
+  <path d="M195 385 L190 470 Q188 480 195 480 L205 480 Q212 480 210 470 L205 400"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <!-- Hoof -->
+  <ellipse cx="200" cy="478" rx="12" ry="6" fill="#5a4a3a"/>
+
+  <!-- Front right leg -->
+  <path d="M240 390 L238 470 Q236 480 243 480 L253 480 Q260 480 258 470 L255 405"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <ellipse cx="248" cy="478" rx="12" ry="6" fill="#5a4a3a"/>
+
+  <!-- Back left leg -->
+  <path d="M320 390 L318 470 Q316 480 323 480 L333 480 Q340 480 338 470 L335 400"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <ellipse cx="328" cy="478" rx="12" ry="6" fill="#5a4a3a"/>
+
+  <!-- Back right leg -->
+  <path d="M365 385 L368 470 Q370 480 377 480 L387 480 Q394 480 392 470 L385 395"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <ellipse cx="382" cy="478" rx="12" ry="6" fill="#5a4a3a"/>
+
+  <!-- TAIL - Fluffy tail -->
+  <path d="M395 300
+           Q420 290 430 305
+           Q445 320 435 335
+           Q425 345 410 340
+           Q400 335 395 320
+           Z"
+        fill="url(#bodyGrad)" stroke="url(#shadowGrad)" stroke-width="2"/>
+  <!-- Tail fluff -->
+  <circle cx="420" cy="315" r="10" fill="url(#woolSpot)"/>
+  <circle cx="430" cy="325" r="8" fill="url(#woolSpot)"/>
+
+  <!-- TECH ACCENTS - Subtle circuit pattern (saddle/blanket area) -->
+  <rect x="230" y="280" rx="5" ry="5" width="100" height="60" fill="url(#techGrad)" opacity="0.15"/>
+  <path d="M240 295 L260 295 L270 305 L290 305 L300 295 L320 295"
+        stroke="url(#techGrad)" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M250 315 L270 315 L280 325 L300 325"
+        stroke="url(#techGrad)" stroke-width="2" fill="none" opacity="0.6"/>
+  <circle cx="260" cy="295" r="4" fill="url(#techGrad)" opacity="0.8"/>
+  <circle cx="290" cy="305" r="4" fill="url(#techGrad)" opacity="0.8"/>
+  <circle cx="320" cy="295" r="4" fill="url(#techGrad)" opacity="0.8"/>
+  <circle cx="270" cy="315" r="3" fill="url(#techGrad)" opacity="0.8"/>
+  <circle cx="300" cy="325" r="3" fill="url(#techGrad)" opacity="0.8"/>
+
+  <!-- Chest fur/wool detail -->
+  <path d="M180 290 Q175 300 180 310 Q185 300 180 290" fill="#e8d4bc" opacity="0.6"/>
+  <path d="M170 305 Q165 315 170 325 Q175 315 170 305" fill="#e8d4bc" opacity="0.6"/>
+  <path d="M190 310 Q185 320 190 330 Q195 320 190 310" fill="#e8d4bc" opacity="0.5"/>
+</svg>
