@@ -415,24 +415,46 @@
   let chatTermSplit = $state(false);
 
   // ── Execute organ / !sh approval (same as gemma-code for the modular agent send)
+  // Now supports "Say something back" to provide feedback (e.g. "Do not run ls ~ as it hangs forever")
+  // and prevents repeating the exact same cmd after reject.
   let pendingExec = $state<{ cmd: string } | null>(null);
-  let execResolver: ((ok: boolean) => void) | null = null;
+  let execResolver: ((result: {approved: boolean, feedback?: string}) => void) | null = null;
   let execAlwaysAllow = $state(false);
 
-  function requestApproval(cmd: string): Promise<boolean> {
-    if (execAlwaysAllow) return Promise.resolve(true);
+  let showFeedbackInput = $state(false);
+  let feedbackInput = $state('');
+
+  function requestApproval(cmd: string): Promise<{approved: boolean, feedback?: string}> {
+    if (execAlwaysAllow) return Promise.resolve({approved: true});
     return new Promise((resolve) => {
       pendingExec = { cmd };
       execResolver = resolve;
     });
   }
 
-  function answerExec(ok: boolean, always = false) {
+  function answerExec(ok: boolean, always = false, feedback?: string) {
     if (always && ok) execAlwaysAllow = true;
     const r = execResolver;
     pendingExec = null;
     execResolver = null;
-    r?.(ok);
+    showFeedbackInput = false;
+    feedbackInput = '';
+    r?.({approved: ok, feedback});
+  }
+
+  function startFeedback() {
+    showFeedbackInput = true;
+    feedbackInput = `Do not do things like 'ls ~' which hangs forever. `;
+  }
+
+  function cancelFeedback() {
+    showFeedbackInput = false;
+    feedbackInput = '';
+  }
+
+  function submitFeedbackDeny() {
+    const fb = feedbackInput.trim();
+    answerExec(false, false, fb);
   }
 
   // ── Helpers ──
@@ -827,11 +849,20 @@
           <div class="exec-approve">
             <div class="exec-approve-head">⟶ {config.name} wants to run a command</div>
             <pre class="exec-out">{pendingExec.cmd}</pre>
-            <div class="exec-approve-btns">
-              <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
-              <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
-              <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
-            </div>
+            {#if showFeedbackInput}
+              <textarea bind:value={feedbackInput} placeholder="Tell the agent why (e.g. 'Do not run ls ~ as it hangs forever. Use ls -la /specific/path instead or a different tool.')." rows="2" style="width:100%; margin:6px 0; font-size:12px; font-family:var(--font-mono);"></textarea>
+              <div class="exec-approve-btns">
+                <button class="exec-yes" onclick={submitFeedbackDeny}>Send feedback &amp; deny</button>
+                <button class="exec-no" onclick={cancelFeedback}>Cancel</button>
+              </div>
+            {:else}
+              <div class="exec-approve-btns">
+                <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
+                <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
+                <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
+                <button onclick={startFeedback} style="background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.3);color:#fbbf24;">Say something back</button>
+              </div>
+            {/if}
           </div>
         {/if}
         {#if error}<div class="error">✗ {error}</div>{/if}
@@ -912,11 +943,20 @@
       <div class="exec-approve">
         <div class="exec-approve-head">⟶ {config.name} wants to run a command</div>
         <pre class="exec-out">{pendingExec.cmd}</pre>
-        <div class="exec-approve-btns">
-          <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
-          <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
-          <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
-        </div>
+        {#if showFeedbackInput}
+          <textarea bind:value={feedbackInput} placeholder="Tell the agent why (e.g. 'Do not run ls ~ as it hangs forever. Use ls -la /specific/path instead or a different tool.')." rows="2" style="width:100%; margin:6px 0; font-size:12px; font-family:var(--font-mono);"></textarea>
+          <div class="exec-approve-btns">
+            <button class="exec-yes" onclick={submitFeedbackDeny}>Send feedback &amp; deny</button>
+            <button class="exec-no" onclick={cancelFeedback}>Cancel</button>
+          </div>
+        {:else}
+          <div class="exec-approve-btns">
+            <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
+            <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
+            <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
+            <button onclick={startFeedback} style="background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.3);color:#fbbf24;">Say something back</button>
+          </div>
+        {/if}
       </div>
     {/if}
     {#if error}<div class="error">✗ {error}</div>{/if}

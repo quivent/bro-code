@@ -2,7 +2,7 @@ import type { InvokeFn, Message, ChatPane, CtxEntry, Endpoint } from './types';
 import { buildApiMessages, loadContext } from './context';
 import { loadMemory, persistMemory, getMemorySection, type MemoryManagerOptions } from './memory';
 import { loadPrompt } from './prompt';
-import { extractExecCalls, EXEC_AWARENESS, runExec, requestExecApproval, isDestructiveCmd } from './scp';
+import { extractExecCalls, EXEC_AWARENESS, runExec, requestExecApproval, isDestructiveCmd, type ExecApprovalResult } from './scp';
 import { splitThinking, trimPartialTag } from './thinking'; // now local to unified package for drop-in reuse
 import { SUPERVISION_AWARENESS } from './supervision';
 import { defaultConfig, createDefaultInvoke } from './config';
@@ -122,6 +122,9 @@ export async function createAgentCore(opts: {
   let currentResponse = '';
   let currentThinking = '';
   let tokenCount = 0;
+
+  // Track commands rejected this agent lifetime so we don't call the same one twice after a reject.
+  const rejectedCmds = new Set<string>();
 
   const memOpts: MemoryManagerOptions = { invoke, memoryFile };
 
@@ -434,11 +437,31 @@ export async function createAgentCore(opts: {
             continue;
           }
 
-          const approved = await requestExecApproval(cmd, onExecApproval);
+          // Prevent calling the exact same command twice after a reject (as requested).
+          if (rejectedCmds.has(cmd)) {
+            const output = '(previously rejected this exact command; do not call the same twice after a reject)';
+            const execUserTurn = { 
+              role: 'user', 
+              content: `[exec] ${cmd}`, 
+              exec: { cmd, output, approved: false } 
+            } as any;
+            currentHistory.push(execUserTurn);
+            continue;
+          }
+
+          const approvalResult: ExecApprovalResult = await requestExecApproval(cmd, onExecApproval);
+          const approved = approvalResult.approved;
+          const feedback = approvalResult.feedback;
+
+          if (!approved) {
+            rejectedCmds.add(cmd);
+          }
 
           const output = approved 
             ? await runExec(cmd, invoke, true)
-            : '(the human denied this command)';
+            : feedback 
+              ? `(the human denied this command and said: ${feedback})` 
+              : '(the human denied this command)';
 
           const execUserTurn = { 
             role: 'user', 
@@ -446,6 +469,15 @@ export async function createAgentCore(opts: {
             exec: { cmd, output, approved } 
           } as any;
           currentHistory.push(execUserTurn);
+
+          if (feedback) {
+            // Inject the user's feedback as additional context so the model learns not to do things like ls ~ that hang,
+            // and not to repeat after reject.
+            currentHistory.push({
+              role: 'user',
+              content: `User feedback: ${feedback}. Do not do things like 'ls ~' which hangs forever. Do not call the same command twice after a reject.`
+            });
+          }
         }
       }
     } finally {

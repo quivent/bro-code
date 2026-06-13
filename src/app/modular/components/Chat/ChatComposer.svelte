@@ -8,65 +8,91 @@
   import { renderMd } from '../../lib/utils';
 
   // Props from host (App state + handlers). Hybrid during final modular polish.
-  export let chatMode: 'solo' | 'dual' | 'vs' | 'supervision';
-  export let messages: Message[] = [];
-  export let streaming = false;
-  export let currentResponse = '';
-  export let currentThinking = '';
-  export let tokenCount = 0;
-  export let elapsed = 0;
-  export let error = '';
-  export let queue: string[] = [];
-  export let pendingExec: { cmd: string } | null = null;
+  // Converted to Svelte 5 runes $props() syntax.
+  // Use `let` (not const) because several props are $bindable (for bind:this on containers + inputEl).
+  let {
+    chatMode = 'solo' as 'solo' | 'dual' | 'vs' | 'supervision',
+    messages = [] as Message[],
+    streaming = false,
+    currentResponse = '',
+    currentThinking = '',
+    tokenCount = 0,
+    elapsed = 0,
+    error = '',
+    queue = [] as string[],
+    pendingExec = null as { cmd: string } | null,
 
-  // Dual / panes
-  export let leftPane: ChatPane;
-  export let rightPane: ChatPane;
-  export let leftInputText = '';
-  export let rightInputText = '';
-  export const leftContainer: HTMLElement | undefined = undefined;
-  export const rightContainer: HTMLElement | undefined = undefined;
-  export const vsContainer: HTMLElement | undefined = undefined;
-  export let vsThread: Array<{ side: 'left' | 'right'; content: string }> = [];
-  export let vsSeed = '';
-  export let vsRunning = false;
-  export let vsRound = 0;
-  export let supervisionThoughts = '';
-  export let supervisionRunning = false;
+    // Dual / panes
+    leftPane,
+    rightPane,
+    leftInputText = '',
+    rightInputText = '',
+    leftContainer = $bindable(undefined as HTMLElement | undefined),
+    rightContainer = $bindable(undefined as HTMLElement | undefined),
+    vsContainer = $bindable(undefined as HTMLElement | undefined),
+    vsThread = [] as Array<{ side: 'left' | 'right'; content: string }>,
+    vsSeed = '',
+    vsRunning = false,
+    vsRound = 0,
+    maxVsRounds = 10,
+    supervisionThoughts = '',
+    supervisionRunning = false,
 
-  // Shared
-  export let inputText = '';
-  export let inputEl: HTMLTextAreaElement | undefined = undefined;
-  export let chatContainer: HTMLElement | undefined = undefined;
-  export let endpoints: Endpoint[] = [];
-  export const activeName = '';
-  export let ctxPct = 0;
-  export let ctxUsedTokens = 0;
-  export let ctxWindow: number | null = null;
+    // Shared
+    inputText = '',
+    inputEl = $bindable(undefined as HTMLTextAreaElement | undefined),
+    chatContainer = $bindable(undefined as HTMLElement | undefined),
+    endpoints = [] as Endpoint[],
+    activeName = '',
+    ctxPct = 0,
+    ctxUsedTokens = 0,
+    ctxWindow = null as number | null,
 
-  // Callbacks wired from host (many will delegate to agent in fuller integration)
-  export let onModeChange: (mode: any) => void = () => {};
-  export let onSave: () => void = () => {};
-  export let onClear: () => void = () => {};
+    // Callbacks wired from host
+    onModeChange = () => {},
+    onSave = () => {},
+    onClear = () => {},
 
-  // Supervision specific (lifted from monolith for the composer)
-  export let mainEndpointId: string | null = null;
-  export let supervisorEndpointId: string | null = null;
-  export let onChatClick: (e: MouseEvent) => void = () => {};
-  export let onCopyMsg: (e: MouseEvent, content: string) => void = () => {};
-  export let onSend: (text: string) => void = () => {};
-  export let onSendToSide: (side: 'left' | 'right') => void = () => {};
-  export let onKeydown: (e: KeyboardEvent) => void = () => {};
-  export const onLeftKeydown: (e: KeyboardEvent) => void = () => {};
-  export const onRightKeydown: (e: KeyboardEvent) => void = () => {};
-  export let onStopVs: () => void = () => {};
-  export let onAnswerExec: (ok: boolean, always?: boolean) => void = () => {};
-  export let onUpdateAutoScroll: (el?: HTMLElement) => void = () => {};
-  export const onScrollActivePane: (side?: 'left' | 'right') => void = () => {};
+    // Supervision specific
+    mainEndpointId = null as string | null,
+    supervisorEndpointId = null as string | null,
+    onChatClick = () => {},
+    onCopyMsg = () => {},
+    onSend = () => {},
+    onSendToSide = () => {},
+    onKeydown = () => {},
+    onLeftKeydown = (() => {}) as (e: KeyboardEvent) => void,
+    onRightKeydown = (() => {}) as (e: KeyboardEvent) => void,
+    onStopVs = () => {},
+    onAnswerExec = (() => {}) as (ok: boolean, always?: boolean, feedback?: string) => void,
+    onUpdateAutoScroll = () => {},
+    onScrollActivePane = (() => {}) as (side?: 'left' | 'right') => void,
 
-  // For dual footer inputs
-  export let leftKeydown: (e: KeyboardEvent) => void = () => {};
-  export let rightKeydown: (e: KeyboardEvent) => void = () => {};
+    // For dual footer inputs
+    leftKeydown = () => {},
+    rightKeydown = () => {},
+  } = $props();
+
+  // Local state for "Say something back" feedback in this composer instance (for when it's the main chat UI)
+  let showFeedbackInput = $state(false);
+  let feedbackInput = $state('');
+
+  function startFeedback() {
+    showFeedbackInput = true;
+    feedbackInput = `Do not do things like 'ls ~' which hangs forever. `;
+  }
+
+  function cancelFeedback() {
+    showFeedbackInput = false;
+    feedbackInput = '';
+  }
+
+  function submitFeedbackDeny() {
+    const fb = feedbackInput.trim();
+    onAnswerExec(false, false, fb);
+    showFeedbackInput = false;
+    feedbackInput = '';
+  }
 
   // Helpers that were in monolith (moved here for encapsulation; can be further extracted)
   function getPaneConfig(pane: ChatPane) {
@@ -148,11 +174,20 @@
     <div class="exec-approve">
       <div class="exec-approve-head">⟶ gemma wants to run a command</div>
       <pre class="exec-out">{pendingExec.cmd}</pre>
-      <div class="exec-approve-btns">
-        <button class="exec-yes" onclick={() => onAnswerExec(true)}>Run</button>
-        <button class="exec-always" onclick={() => onAnswerExec(true, true)}>Always this session</button>
-        <button class="exec-no" onclick={() => onAnswerExec(false)}>Deny</button>
-      </div>
+      {#if showFeedbackInput}
+        <textarea bind:value={feedbackInput} placeholder="Tell the agent why (e.g. 'Do not run ls ~ as it hangs forever. Use ls -la /specific/path instead or a different tool.')." rows="2" style="width:100%; margin:6px 0; font-size:12px; font-family:var(--font-mono);"></textarea>
+        <div class="exec-approve-btns">
+          <button class="exec-yes" onclick={submitFeedbackDeny}>Send feedback &amp; deny</button>
+          <button class="exec-no" onclick={cancelFeedback}>Cancel</button>
+        </div>
+      {:else}
+        <div class="exec-approve-btns">
+          <button class="exec-yes" onclick={() => onAnswerExec(true)}>Run</button>
+          <button class="exec-always" onclick={() => onAnswerExec(true, true)}>Always this session</button>
+          <button class="exec-no" onclick={() => onAnswerExec(false)}>Deny</button>
+          <button onclick={startFeedback} style="background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.3);color:#fbbf24;">Say something back</button>
+        </div>
+      {/if}
     </div>
   {/if}
   {#if error}<div class="error">✗ {error}</div>{/if}

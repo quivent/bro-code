@@ -40,32 +40,39 @@ export function isDestructiveCmd(cmd: string): boolean {
 
 // Global pending exec approval state (for UI approval dialog)
 export let pendingExec: { cmd: string } | null = null;
-export let execResolver: ((ok: boolean) => void) | null = null;
+export let execResolver: ((result: ExecApprovalResult) => void) | null = null;
 export let execAlwaysAllow = false;
 
-export function requestApproval(cmd: string): Promise<boolean> {
-  if (execAlwaysAllow) return Promise.resolve(true);
+export function requestApproval(cmd: string): Promise<ExecApprovalResult> {
+  if (execAlwaysAllow) return Promise.resolve({approved: true});
   return new Promise((resolve) => {
     pendingExec = { cmd };
     execResolver = resolve;
   });
 }
 
-export function answerExec(ok: boolean, always = false) {
+export function answerExec(ok: boolean, always = false, feedback?: string) {
   if (always && ok) execAlwaysAllow = true;
   const r = execResolver;
   pendingExec = null;
   execResolver = null;
-  r?.(ok);
+  r?.({approved: ok, feedback});
+}
+
+export interface ExecApprovalResult {
+  approved: boolean;
+  feedback?: string;  // user message to inject, e.g. "Do not run ls ~ as it hangs forever. Do not repeat rejected commands."
 }
 
 // For unified AgentCore: pass a callback instead of using global state.
 // This allows the agent to drive the full loop while the UI layer (monolith or modular composer)
 // decides how to prompt the human (e.g. via pendingExec state + dialog, or auto-approve, etc.).
-export async function requestExecApproval(cmd: string, onApproval?: (cmd: string) => Promise<boolean>): Promise<boolean> {
-  if (execAlwaysAllow) return true;
+export async function requestExecApproval(cmd: string, onApproval?: (cmd: string) => Promise<boolean | ExecApprovalResult>): Promise<ExecApprovalResult> {
+  if (execAlwaysAllow) return {approved: true};
   if (onApproval) {
-    return onApproval(cmd);
+    const res = await onApproval(cmd);
+    if (typeof res === 'boolean') return {approved: res};
+    return res;
   }
   // fallback to global pending state
   return requestApproval(cmd);
