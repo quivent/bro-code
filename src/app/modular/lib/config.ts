@@ -26,7 +26,7 @@ export function createDefaultInvoke(): InvokeFn {
     if (cmd === 'read_file') {
       const p = (args?.path as string) || '';
       if (p.includes('memory')) return JSON.stringify({});
-      if (p.includes('prompt')) return '# Starting prompt (demo)\nYou are a helpful agent.';
+      if (p.includes('prompt')) return '# Starting prompt (demo)\nYou are a helpful agent.\n\n(12 machine integration contexts are always injected by context.ts to teach you the bro machine, SCP, memory evolution, modes, growth loops, and symbiosis.)';
       return '(demo file content)';
     }
     if (cmd === 'write_file') {
@@ -86,7 +86,7 @@ export function createWebInvoke(): InvokeFn {
         return JSON.stringify({}); // empty memory
       }
       if (norm.includes('prompt') || norm.endsWith('prompt.md')) {
-        return '# Bro Web Prompt\n\nYou are a helpful local agent running in the browser.';
+        return '# Bro Web Prompt\n\nYou are a helpful local agent running in the browser.\n\nYou are deeply integrated with the machine via the 12 always-present machine integration contexts (architecture, SCP tools, memory as evolution, prompt as living identity, context feeding, endpoints, chat modes, desktop/web realms, transcripts, reflection loops, sovereign homes, and the unified agent). Use them. Grow with the machine.';
       }
       return ''; // empty for other context files
     }

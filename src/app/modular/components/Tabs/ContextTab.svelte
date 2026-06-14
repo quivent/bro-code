@@ -61,7 +61,7 @@
         ondragend={() => { ctxDragIdx = null; }}
       >
         <span class="grip">⠿</span>
-        <span class="kind {en.kind}">{en.kind}</span>
+        <span class="kind {en.kind}">{en.kind === 'core' ? 'machine' : en.kind}</span>
         <label class="show-on-chat" title="Mark to show this context visibly in the chat area and preferentially keep in sliding context">
           <input type="checkbox" checked={!!en.showInChat} onchange={() => onToggleShowInChat?.(i)} />
           <span>show on chat</span>
@@ -83,6 +83,7 @@
       Drag rows to reorder — entries are injected as one system message, in this order, on every send.
       Folders inject their file listing. Each entry capped at ~6k tokens. Drop files from Finder anywhere on this tab.
       “load context” re-reads everything from disk; the chat's context bar includes what's loaded.
+      (12 core BRO MACHINE INTEGRATION contexts are always injected underneath your entries for deep growth & symbiosis with the machine.)
     </div>
   </div>
 </main>
@@ -114,6 +115,7 @@
   .ctx-entry .kind.prompt { background: rgba(167, 139, 250, 0.14); color: #a78bfa; }
   .ctx-entry .kind.memory { background: rgba(240, 136, 62, 0.14); color: #f0883e; }
   .ctx-entry .kind.dir { background: rgba(96, 165, 250, 0.14); color: #60a5fa; }
+  .ctx-entry .kind.core { background: rgba(167, 139, 250, 0.16); color: #c4b5fd; border: 1px solid rgba(167,139,250,0.25); }
   .ctx-entry .path { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ctx-entry .x {
     background: transparent; border: none; color: var(--text-secondary);

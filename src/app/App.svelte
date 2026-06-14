@@ -297,6 +297,7 @@
     const currentCtxEntries = ctxEntries || [
       { kind: 'prompt', path: PROMPT_FILE },
       { kind: 'memory', path: MEMORY_FILE },
+      // 12 core machine contexts are provided by loadContext default seed when the list is minimal
     ];
     const agent = await createAgentCore({
       invoke,
@@ -381,7 +382,9 @@
   });
 
   // Supporting state for modular context / agent init (minimal for integration)
-  let ctxEntries: Array<{ kind: 'prompt' | 'memory' | 'file' | 'dir'; path: string; showInChat?: boolean }> = $state([
+  // Now seeds the 12 creative core machine integration contexts by default for fresh sessions
+  // (so Gemma always starts with deep awareness of the bro machine, growth loops, SCP, memory etc.).
+  let ctxEntries: Array<{ kind: 'prompt' | 'memory' | 'file' | 'dir' | 'core'; path: string; showInChat?: boolean }> = $state([
     { kind: 'prompt', path: PROMPT_FILE },
     { kind: 'memory', path: MEMORY_FILE },
   ]);

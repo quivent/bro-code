@@ -37,7 +37,7 @@ export interface ChatPane {
   endpointId: string | null;
 }
 
-export type CtxEntry = { kind: 'prompt' | 'memory' | 'file' | 'dir'; path: string; showInChat?: boolean };
+export type CtxEntry = { kind: 'prompt' | 'memory' | 'file' | 'dir' | 'core'; path: string; showInChat?: boolean };
 
 export interface Tool {
   name: string;
