@@ -1,14 +1,24 @@
-# ██████  ██████   ██████ 
-# ██   ██ ██   ██ ██    ██
-# ██████  ██████  ██    ██
-# ██   ██ ██   ██ ██    ██
-# ██████  ██   ██  ██████ 
+<pre style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.05; margin: 0 0 10px 0; padding: 12px 14px; background: #0d1117; color: #d4d4d8; border-radius: 6px; display: inline-block; border: 1px solid #242a33; white-space: pre;">
+<span style="color:rgb(63,182,178)">██████  ██████   ██████ </span><br>
+<span style="color:rgb(113,148,212)">██   ██ ██   ██ ██    ██</span><br>
+<span style="color:rgb(163,113,247)">██████  ██████  ██    ██</span><br>
+<span style="color:rgb(202,124,154)">██   ██ ██   ██ ██    ██</span><br>
+<span style="color:rgb(240,136,62)">██████  ██   ██  ██████ </span>
+</pre>
+
+```ansi
+[38;2;63;182;178m██████  ██████   ██████ [0m
+[38;2;113;148;212m██   ██ ██   ██ ██    ██[0m
+[38;2;163;113;247m██████  ██████  ██    ██[0m
+[38;2;202;124;154m██   ██ ██   ██ ██    ██[0m
+[38;2;240;136;62m██████  ██   ██  ██████ [0m
+```
 
 **bro** — local model · type to begin
 
 A beautiful, modular, self-forging LLM desktop (and web) companion. Chat with your local models, forge tools on the fly with `!sh`, keep rich memory + prompt + context, run in solo/dual/vs/supervision modes, and deploy the pure Vite frontend anywhere.
 
-> Built with Svelte 5, Tauri, and a whole lot of love for local AI. Gradient accents from teal → purple → orange. Dark theme as deep as the night.
+> Built with Svelte 5, Tauri, and a whole lot of love for local AI. The signature gradient runs teal (#3fb6b2) → purple (#a371f7) → orange (#f0883e) across the ASCII logo above (HTML logo above always shows it; ANSI block below for `cat README.md` in truecolor terminals). Dark theme as deep as the night.
 
 ## Palette & Vibe
 
@@ -39,7 +49,7 @@ Everything feels hand-crafted, terminal-adjacent, yet warm and alive. ASCII logo
 ## Quick Start (Desktop)
 
 ```bash
-git clone https://github.com/yourname/bro-code
+git clone https://github.com/quivent/bro-code
 cd bro-code
 npm install
 npm run tauri:dev
@@ -90,7 +100,7 @@ The web backend now supports proper user-based auth (JWT + `~/bro/users.json`). 
 
 ## The Style
 
-Dark. Monospace where it counts. Gradient text on the logo. Soft lavender glows. Buttons that feel like they were drawn by someone who still loves terminals. Context that slides. Tools that ask permission like a polite but slightly unhinged friend.
+Dark. Monospace where it counts. Gradient text on the logo (the HTML logo at the top always renders the teal → purple → orange gradient for everyone; the ```ansi block carries real ESC truecolor codes for `cat` in supported terminals). Soft lavender glows. Buttons that feel like they were drawn by someone who still loves terminals. Context that slides. Tools that ask permission like a polite but slightly unhinged friend.
 
 If it feels good to look at while you're coaxing a 30B model into writing better code than you, we did it right.
 
