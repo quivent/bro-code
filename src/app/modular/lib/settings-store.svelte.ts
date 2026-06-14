@@ -76,13 +76,57 @@ export const settings = $state({
 });
 
 // Internal invoke (matches App pattern; no dep on host)
+// Now backend-aware: if 'bro-web:backend-url' is set in LS (and user has logged in),
+// settings get/set go through the authenticated /api/invoke to the server's per-user
+// ~/.bro-users/<user>/bro/web-settings.json  (instead of only browser localStorage).
+// This unifies storage with the rest of the invoke surface (FS, shell, etc.).
+// On any backend error we silently fall back to pure localStorage so settings are never lost.
 const isTauri = '__TAURI_INTERNALS__' in (typeof window !== 'undefined' ? window : {});
 const webInvoke = createWebInvoke();
+
+async function invokeViaBackend(base: string, cmd: string, args?: Record<string, unknown>) {
+  const token = localStorage.getItem('bro-web:auth-token');
+  const url = base.replace(/\/$/, '') + '/api/invoke';
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 8000);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ cmd, args: args || {} }),
+      signal: controller.signal
+    });
+    clearTimeout(t);
+    if (res.status === 401) {
+      localStorage.removeItem('bro-web:auth-token');
+      console.warn('[settings-store] backend auth issue for', cmd, '— falling back to localStorage');
+      return webInvoke(cmd, args);
+    }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('[settings-store] backend settings call failed', res.status, cmd, txt);
+      return webInvoke(cmd, args);
+    }
+    return res.json();
+  } catch (err: any) {
+    clearTimeout(t);
+    const reason = err?.name === 'AbortError' ? 'timeout' : (err?.message || String(err));
+    console.warn(`[settings-store] backend invoke error for "${cmd}" (${reason}) — falling back to localStorage`);
+    return webInvoke(cmd, args);
+  }
+}
+
 async function invoke(cmd: string, args?: Record<string, unknown>): Promise<any> {
   if (isTauri) {
     return tauriInvoke(cmd, args);
   }
-  // Use the same rich web storage layer as the main app for settings persistence in browser/web mode.
+  const be = localStorage.getItem('bro-web:backend-url') || '';
+  if (be) {
+    return invokeViaBackend(be, cmd, args);
+  }
+  // Pure web / no backend configured: localStorage via the webInvoke layer ('bro-web:setting:*' keys)
   return webInvoke(cmd, args);
 }
 
@@ -200,6 +244,11 @@ export function getActiveEndpoint(): Endpoint | null {
 }
 
 export function cleanBadEndpoints() {
+  // Much gentler now: we only *normalize* URLs and drop entries that contain obvious garbage
+  // strings left behind by previous failed UI operations (error messages embedded in the URL field).
+  // We no longer auto-delete user-saved endpoints just because they look odd, point at a custom port,
+  // temporarily failed a health check, etc. The user can delete them explicitly in the Settings UI.
+  // This was a major source of "you keep clearing my endpoints/settings".
   const beforeCount = settings.endpoints.length;
   settings.endpoints = settings.endpoints
     .map((e: Endpoint) => {
@@ -208,16 +257,17 @@ export function cleanBadEndpoints() {
     })
     .filter((e: Endpoint) => {
       const fixedUrl = e.url || '';
-      if (!fixedUrl || !fixedUrl.startsWith('http')) {
-        return false;  // drop anything that didn't normalize to a real absolute http URL (prevents fetch to relative 'completions' or bad hosts)
-      }
       const u = fixedUrl.toLowerCase();
+      // Only drop the truly toxic ones that have error junk in them (from past bad state in the form or fetch failures)
       if (u.includes('failed to load resource') || u.includes('not found (completions') || u.includes('[error]')) {
+        console.warn('[settings] dropping garbage endpoint entry that contained error text:', e);
         return false;
       }
-      // Prune endpoints that point at the Vite dev server (port 5314) — they 404 on /completions and spam the console relay
-      if (u.includes(':5314') || /127\.0\.0\.1:5314|localhost:5314/.test(u)) {
-        return false;
+      // We *keep* everything else, even if it doesn't look like a perfect http URL yet (user may be in the middle of editing)
+      // or if it points at :5314 (dev testing) etc. Let the user manage their list.
+      if (!fixedUrl || !fixedUrl.startsWith('http')) {
+        // leave it; the UI will show it as invalid and the test will fail gracefully
+        return true;
       }
       return true;
     });
@@ -286,31 +336,10 @@ export async function loadSettings() {
       }
     }
 
-    // Clean garbage
-    const beforeCount = settings.endpoints.length;
-    settings.endpoints = settings.endpoints
-      .map((e: Endpoint) => {
-        const fixed = normalizeToChatCompletions(e.url);
-        return fixed ? { ...e, url: fixed } : e;
-      })
-      .filter((e: Endpoint) => {
-        const fixedUrl = e.url || '';
-        if (!fixedUrl || !fixedUrl.startsWith('http')) {
-          return false;  // drop anything that didn't normalize to a real absolute http URL
-        }
-        const u = fixedUrl.toLowerCase();
-        if (u.includes('failed to load resource') || u.includes('not found (completions') || u.includes('[error]')) {
-          return false;
-        }
-        // Prune endpoints that point at the Vite dev server (port 5314) — they 404 on /completions and spam the console relay
-        if (u.includes(':5314') || /127\.0\.0\.1:5314|localhost:5314/.test(u)) {
-          return false;
-        }
-        return true;
-      });
-    if (settings.endpoints.length < beforeCount) {
-      void saveEndpoints();
-    }
+    // The aggressive "clean garbage" filter was here previously and was responsible for silently deleting
+    // user endpoints. We now rely on the gentler cleanBadEndpoints() (called earlier in this load) which only
+    // removes entries containing literal error garbage strings. No more auto-nuking of your list.
+    cleanBadEndpoints();
 
     // Chat
     const temp = await invoke('get_setting', { key: 'chatTemperature' });
@@ -480,7 +509,7 @@ export async function clearSettingsState() {
   settings.requestTimeoutMs = 30000;
   settings.debugMode = false;
   settings.showRawResponses = false;
-  settings.settingsStatus = 'In-memory settings cleared (NO on-disk files touched).';
+  settings.settingsStatus = 'In-memory settings reset to defaults. Persisted storage (see below) was NOT touched. Your endpoints etc. should come back on next reload unless you also cleared browser LS or the server json.';
   setTimeout(() => { settings.settingsStatus = ''; }, 8000);
   applyAppearance();
 }

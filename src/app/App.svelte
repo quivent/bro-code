@@ -2,6 +2,7 @@
   import { marked, Renderer } from 'marked';
   import DOMPurify from 'dompurify';
   import hljs from 'highlight.js';
+  import { onMount, onDestroy } from 'svelte';
 
   // marked v17 ignores the `highlight` option — use a custom renderer instead
   const renderer = new Renderer();
@@ -115,11 +116,150 @@
     if (isTauri) {
       return tauriInvoke(cmd, args);
     }
+    // If a companion web backend URL is configured (localStorage 'bro-web:backend-url'),
+    // route FS/settings/shell invokes through the authed /api/invoke (JWT from /api/login).
+    // This gives real per-user ~/bro (or ~/.bro-users/<user>/bro) on the server.
+    // Falls back to the pure localStorage webInvoke if no backend URL set.
+    const be = localStorage.getItem('bro-web:backend-url') || '';
+    if (be) {
+      return callWebBackend(be, cmd, args);
+    }
     // Rich web fallback: localStorage + virtual FS for prompt/memory/context/transcripts/settings.
     // This makes the pure Vite web app fully testable when served from (or pointed at)
     // the same machine as the Gemma inference server.
     return webInvoke(cmd, args);
   }
+
+  // --- Web backend auth + invoke wiring (fits the casual JSON + direct style) ---
+  // Set 'bro-web:backend-url' (e.g. http://localhost:3456 or https://bro.gemma.training) via Settings > Advanced.
+  // Login stores 'bro-web:auth-token'. Token is sent as Authorization: Bearer on every /api/invoke.
+  async function callWebBackend(base: string, cmd: string, args?: Record<string, unknown>) {
+    const token = localStorage.getItem('bro-web:auth-token');
+    const url = base.replace(/\/$/, '') + '/api/invoke';
+
+    // Hardened: always timeout so a dead/misconfigured backend never hangs the whole app.
+    // On any failure we degrade gracefully back to the localStorage webInvoke (keeps bro usable).
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8s max per invoke call
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cmd, args: args || {} }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (res.status === 401) {
+        localStorage.removeItem('bro-web:auth-token');
+        console.warn('[web] backend auth failed for', cmd, '— cleared token, falling back to localStorage');
+        return webInvoke(cmd, args);
+      }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        console.warn('[web] backend invoke failed', res.status, cmd, txt);
+        return webInvoke(cmd, args); // degrade instead of throwing
+      }
+      return res.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      const reason = err.name === 'AbortError' ? 'timeout' : (err.message || err);
+      console.warn(`[web] backend invoke error for "${cmd}" (${reason}) — falling back to localStorage virtual FS`);
+      // Never let a backend problem make the whole UI unresponsive.
+      return webInvoke(cmd, args);
+    }
+  }
+
+  let webBackendUrl = $state(localStorage.getItem('bro-web:backend-url') || '');
+  let webAuthUser = $state('');
+
+  async function refreshWebAuthUser() {
+    const base = localStorage.getItem('bro-web:backend-url') || webBackendUrl;
+    const token = localStorage.getItem('bro-web:auth-token');
+    if (!base || !token) {
+      webAuthUser = '';
+      return;
+    }
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const r = await fetch(base.replace(/\/$/, '') + '/api/me', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal
+      });
+      clearTimeout(t);
+      if (r.ok) {
+        const j = await r.json();
+        webAuthUser = j.user || j.username || '';
+      } else {
+        webAuthUser = '';
+        if (r.status === 401) localStorage.removeItem('bro-web:auth-token');
+      }
+    } catch {
+      webAuthUser = '';
+    }
+  }
+
+  // Login helper (can be called from Settings UI or console)
+  async function loginWebBackend(username: string, password: string, base?: string) {
+    const urlBase = (base || localStorage.getItem('bro-web:backend-url') || webBackendUrl || '').replace(/\/$/, '');
+    if (!urlBase) throw new Error('set a web backend URL first (Settings > Advanced)');
+    const res = await fetch(urlBase + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: 'login failed' }));
+      throw new Error(e.error || `login ${res.status}`);
+    }
+    const data = await res.json();
+    localStorage.setItem('bro-web:auth-token', data.token);
+    localStorage.setItem('bro-web:backend-url', urlBase);
+    webBackendUrl = urlBase;
+    webAuthUser = data.user || username;
+    console.log(`[web] logged in as ${webAuthUser} @ ${urlBase}`);
+    // Notify listeners (Settings UI etc) and re-init so invoke now hits real backend
+    window.dispatchEvent(new CustomEvent('bro-web-auth-changed'));
+    await loadSettings();
+    return webAuthUser;
+  }
+
+  function logoutWebBackend() {
+    localStorage.removeItem('bro-web:auth-token');
+    // keep the url so user can re-login easily
+    webAuthUser = '';
+    window.dispatchEvent(new CustomEvent('bro-web-auth-changed'));
+    console.log('[web] logged out (token cleared)');
+  }
+
+  // --- Context window polling (user request: poll instead of one-shot probe) ---
+  let ctxPollId: ReturnType<typeof setInterval> | null = null;
+
+  function startCtxPolling() {
+    stopCtxPolling();
+    // immediate + periodic (only when page is visible to avoid wasting cycles / battery)
+    const maybeProbe = () => {
+      if (document.visibilityState === 'visible') void probeCtxWindow();
+    };
+    maybeProbe();
+    ctxPollId = setInterval(maybeProbe, 45000); // a bit less chatty now that we have guards
+  }
+
+  function stopCtxPolling() {
+    if (ctxPollId) {
+      clearInterval(ctxPollId);
+      ctxPollId = null;
+    }
+  }
+
+  // Also probe right before a send so the bar reflects reality for the upcoming request
+  // (window can be dynamic on some servers)
 
   // Debug marker to prove this exact source is running (bypasses any caching doubts).
   // Guarded so HMR doesn't spam the log on every hot update.
@@ -260,6 +400,8 @@
   // ctxUsedTokens ~ chars/4 estimate of what will *actually* be sent next (after client-side sliding/prune per maxHistoryTurns).
   // This gives you visibility and control over the context Gemma receives.
   let ctxWindow = $state<number | null>(null);
+  let probingCtx = $state(false); // guard so we don't pile up probes
+  let lastCtxProbe = 0;
 
   let ctxUsedTokens = $derived.by(() => {
     let hist = messages.map(m => ({ role: m.role, content: m.content, thinking: m.thinking, exec: m.exec }));
@@ -279,18 +421,31 @@
   });
   let ctxPct = $derived(ctxWindow ? Math.min(100, (ctxUsedTokens / ctxWindow) * 100) : 0);
 
-  async function probeCtxWindow() {
+  async function probeCtxWindow(force = false) {
+    const now = Date.now();
+    if (!force && (probingCtx || (now - lastCtxProbe < 8000))) return; // simple throttle + guard
+
     const ep = activeEndpoint;
     if (!ep?.url) return;
+
+    probingCtx = true;
+    lastCtxProbe = now;
+
     try {
       // Use the exact same clean builder as Settings health/test (normalizes, collapses dup /v1, always produces .../models)
       // This eliminates the previous fragile replace that produced /v1/v1/models (causing the 404 "models" errors).
       const url = getHealthUrl(ep.url);
       if (!url) return;
+
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 7000);
+
       const res = await fetch(url, {
         method: 'GET',
-        signal: (AbortSignal as any).timeout ? (AbortSignal as any).timeout(6000) : undefined
+        signal: controller.signal
       });
+      clearTimeout(t);
+
       if (!res.ok) return;
       const j = await res.json();
       const first = Array.isArray(j?.data) ? j.data[0] : j;
@@ -312,6 +467,9 @@
       }
     } catch (e) {
       // silent; user can use explicit Test in Settings which also hits /models
+      // (the new guarded polling + fallback in backend calls prevents hangs)
+    } finally {
+      probingCtx = false;
     }
   }
 
@@ -321,8 +479,8 @@
     const ep = currentEndpoint;
     if (ep && ep !== lastProbedEndpoint) {
       lastProbedEndpoint = ep;
-      // small delay to let health settle
-      setTimeout(() => { void probeCtxWindow(); }, 300);
+      // small delay to let health settle (the probe itself is now throttled + guarded)
+      setTimeout(() => { void probeCtxWindow(); }, 350);
     }
   });
 
@@ -505,7 +663,9 @@
   let leftContainer: HTMLElement | undefined = $state();
   let rightContainer: HTMLElement | undefined = $state();
 
-  // Minimal addition for chat + terminal split mode
+  // Controls whether the Chat main tab is showing the combined chat+terminal split view.
+  // Activated via the "Chat" / "Terminal" subtabs that appear under the main Chat tab (and its mode bar).
+  // This keeps the primary top-level nav clean.
   let chatTermSplit = $state(false);
 
   // ── Execute organ / !sh approval (SCP tool use + human-in-the-loop)
@@ -596,6 +756,8 @@
   async function send() {
     const text = inputText.trim();
     if (!text || streaming) return;
+    // Fresh context window right before we build the prompt (so bar + used estimate is current)
+    void probeCtxWindow(true); // force even if throttled, user just typed send
     if (!history.length || history[history.length - 1] !== text) history = [...history, text].slice(-50);
     histIdx = history.length;
     inputText = '';
@@ -1100,6 +1262,35 @@
       location.reload();
     }
   }
+
+  // Lifecycle: start ctx polling (for window size), restore web auth if configured, listen for changes from Settings login
+  onMount(() => {
+    startCtxPolling();
+    // Web auth restore (non-blocking)
+    if (!isTauri) {
+      // sync url state for banner
+      webBackendUrl = localStorage.getItem('bro-web:backend-url') || '';
+      void refreshWebAuthUser();
+    }
+    const onAuth = () => {
+      webBackendUrl = localStorage.getItem('bro-web:backend-url') || '';
+      void refreshWebAuthUser();
+      // Re-init agent so any pending FS ops now go through the (newly authed) backend
+      void loadSettings();
+    };
+    window.addEventListener('bro-web-auth-changed', onAuth);
+
+    // Extra settle probe (the polling + internal throttle + visibility guard will prevent abuse)
+    setTimeout(() => void probeCtxWindow(), 1100);
+
+    return () => {
+      window.removeEventListener('bro-web-auth-changed', onAuth);
+    };
+  });
+
+  onDestroy(() => {
+    stopCtxPolling();
+  });
 </script>
 
 <svelte:window onkeydown={globalKeydown} />
@@ -1108,8 +1299,11 @@
   <header>
     <span class="title">{config.name}</span>
     {#if !isTauri}
-      <span class="web-mode-banner" title="Running as pure web app (Vite frontend). Persistence uses browser localStorage + virtual FS. Tools are simulated. See WEB_MODE_PICKUP.md for server co-location instructions and backend stub.">
+      <span class="web-mode-banner" title={webBackendUrl ? `Web + companion backend @ ${webBackendUrl} (auth ${webAuthUser ? 'active as '+webAuthUser : 'not logged in — use Settings > Advanced'})` : 'Running as pure web app (Vite frontend). Persistence uses browser localStorage + virtual FS. Tools are simulated. Configure companion backend + auth in Settings > Advanced for real FS/shell per-user.'}>
         🌐 Web mode
+        {#if webBackendUrl}
+          <span class="web-backend-pill">{webAuthUser ? webAuthUser : 'login?'}</span>
+        {/if}
       </span>
     {/if}
     <nav>
@@ -1124,9 +1318,6 @@
         <button class:active={activeTab === 'kv'} onclick={() => activeTab = 'kv'}>KV</button>
         <button class:active={activeTab === 'source'} onclick={() => activeTab = 'source'}>Source</button>
         <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
-        {#if activeTab === 'chat'}
-          <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
-        {/if}
       {:else}
         <!-- Mobile simplified main tabs: only Chat (which covers Prompt/Memory/Tools underneath) and Settings -->
         <button 
@@ -1140,9 +1331,6 @@
             onclick={() => activeTab = 'settings'}>
             Settings
           </button>
-        {/if}
-        {#if activeTab === 'chat'}
-          <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
         {/if}
       {/if}
     </nav>
@@ -1158,7 +1346,7 @@
   <!-- Mobile chat sub-tabs: Prompt, Memory, Tools underneath Chat for mobile -->
   {#if isMobile && ['chat','prompt','memory','tools'].includes(activeTab)}
     <div class="mobile-chat-subnav">
-      <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
+      <button class:active={activeTab === 'chat' && !chatTermSplit} onclick={() => { activeTab = 'chat'; chatTermSplit = false; }}>Chat</button>
       <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
       <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
       <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
@@ -1174,6 +1362,16 @@
     <button class:active={appSettings.chatMode === 'vs'} onclick={() => { appSettings.chatMode = 'vs'; dualMode = false; }}>VS (crosstalk)</button>
     <button class:active={appSettings.chatMode === 'supervision'} onclick={() => { appSettings.chatMode = 'supervision'; dualMode = false; }}>Supervision</button>
   </div>
+
+  <!-- Chat subtabs: the previous "Chat+term" toggle is now a proper subtab under the main Chat tab.
+       This keeps the primary nav bar clean (no conditional accessory buttons).
+       "Terminal" here activates the combined chat+terminal split view while staying in the Chat main tab.
+       The top-level Terminal tab (when visible) is still available for full-screen dedicated terminal use. -->
+  <div class="chat-subnav">
+    <button class:active={!chatTermSplit} onclick={() => chatTermSplit = false}>Chat</button>
+    <button class:active={chatTermSplit} onclick={() => chatTermSplit = true}>Terminal</button>
+  </div>
+
   {#if chatTermSplit}
   <!-- Minimal chat + terminal split screen -->
   <div class="split" style="display: flex; flex: 1; overflow: hidden;">
@@ -1341,44 +1539,45 @@
         placeholder={`talk to ${config.name}...`} rows="2" disabled={streaming}></textarea>
     </div>
 
-    <!-- Metrics (ctx usage + stats) and suggestive prompts (feed actions) below the prompt. -->
+    <!-- Metrics (ctx usage + stats) and context list below the prompt.
+         Numbers on the right. Visual bar only when context is actually used.
+         Action buttons moved into the context list header (they belong with the "shown" list they affect). -->
     <div class="post-prompt-bar">
-      <!-- Metrics row: ctx usage + stats side by side on large screens -->
+      <!-- ctx usage + stats row -->
       <div class="bottom-metrics">
-        <!-- ctx usage metrics -->
-        <div class="ctx-bar" title="Context usage for the next request (after client-side sliding per maxHistoryTurns + maxToolHistory). Estimated at ~4 chars per token. Tool usage results are preferentially retained. Window probed from the active inference server's /v1/models (max_model_len). Use Test in Settings to help populate the window size. Control in Settings &gt; Agent.">
+        <div class="ctx-bar" title="Context usage for the *next* request (client-side prune per maxHistoryTurns + maxToolHistory + live systemContext from prompt/memory/marked files). ~4 chars/token estimate. Window = active endpoint's max_model_len (polled from /v1/models).">
           <span class="ctx-label">ctx</span>
-          <div class="ctx-track">
-            <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow ? Math.max(ctxPct, 1.5) : 0}%"></div>
-          </div>
-          <div class="ctx-text">
+          {#if ctxUsedTokens > 0 || ctxWindow}
+            <div class="ctx-track">
+              <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow && ctxUsedTokens > 0 ? Math.max(ctxPct, 2) : 0}%"></div>
+            </div>
+          {/if}
+          <div class="ctx-nums">
             {#if ctxWindow}
-              {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · {(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left
+              {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · <span class="ctx-left">{(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left</span>
             {:else}
               ~{(ctxUsedTokens / 1000).toFixed(1)}k used · window unknown
             {/if}
           </div>
         </div>
 
-        <!-- stats metrics -->
+        <!-- stats (rightish in the metrics row) -->
         {#if !streaming && messages.length > 0}
           <div class="stats">{elapsed.toFixed(1)}s · {tokenCount} tok · {(tokenCount / Math.max(elapsed, 0.1)).toFixed(0)} tok/s</div>
         {/if}
       </div>
 
-      <!-- suggestive prompts / feed actions -->
-      <div class="bottom-actions">
-        <div class="feed-ctx-row">
-          <button class="feed-btn" onclick={feedMarkedContext} disabled={!shownCtx.length}>Feed marked context</button>
-          <button class="feed-btn" onclick={refreshContext}>Refresh context</button>
-          <button class="feed-btn" onclick={clearShown} disabled={!shownCtx.length}>Clear shown</button>
-        </div>
-      </div>
-
-      <!-- Context shown list: now below the prompt box, wider/full width -->
+      <!-- Context shown list (wider, at the very bottom). Buttons live in the head now. -->
       {#if shownCtx.length}
         <div class="shown-ctx context-below">
-          <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
+          <div class="shown-ctx-head">
+            📎 Shown context (marked in Context tab • fed on next turn)
+            <span class="ctx-actions">
+              <button class="feed-btn small" onclick={feedMarkedContext} disabled={!shownCtx.length}>Feed</button>
+              <button class="feed-btn small" onclick={refreshContext}>Refresh</button>
+              <button class="feed-btn small" onclick={clearShown} disabled={!shownCtx.length}>Clear</button>
+            </span>
+          </div>
           {#each shownCtx as c}
             <div class="shown-ctx-item" title={c.path}>
               <span class="kind {c.kind}">{c.kind}</span>
@@ -1623,6 +1822,18 @@
     margin-left: 4px;
     vertical-align: middle;
     cursor: help;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .web-backend-pill {
+    background: rgba(63, 182, 178, 0.2);
+    color: #3fb6b2;
+    border: 1px solid rgba(63,182,178,0.35);
+    padding: 0 3px;
+    border-radius: 2px;
+    font-size: 9px;
+    line-height: 1;
   }
   nav { display: flex; gap: 1px; background: rgba(42, 42, 58, 0.3); border-radius: 6px; padding: 2px; }
   nav button {
@@ -1724,54 +1935,96 @@
   .exec-always { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.3); color: var(--lavend); }
   .exec-no { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); color: #f87171; }
 
-  /* Context usage bar (imported from gemma-code ChatComposer) */
-  .ctx-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; font-size: 11px; color: var(--muted); font-family: var(--font-mono); border-top: 1px solid rgba(42,42,58,0.25); }
+  /* Context usage bar — numbers on the right, track/bar only when ctx actually used */
+  .ctx-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    width: 100%;
+  }
   .post-prompt-bar .ctx-bar { border-top: none; padding-top: 0; }
-  .ctx-label { font-weight: 600; letter-spacing: 0.5px; }
-  .ctx-track { flex: 1; height: 4px; background: rgba(42,42,58,0.4); border-radius: 2px; overflow: hidden; }
-  .ctx-fill { height: 100%; background: var(--lavend); transition: width 200ms ease; }
+  .ctx-label {
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    flex: none;
+  }
+  .ctx-track {
+    flex: 1 1 auto;
+    min-width: 80px;
+    max-width: 320px;
+    height: 8px;
+    background: rgba(42,42,58,0.45);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .ctx-fill {
+    height: 100%;
+    background: var(--lavend);
+    transition: width 200ms ease;
+  }
   .ctx-fill.warn { background: #fbbf24; }
   .ctx-fill.crit { background: #f87171; }
-  .ctx-text { font-size: 10px; }
+  .ctx-nums {
+    flex: none;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .ctx-nums .ctx-left { color: var(--dim); }
+  .ctx-actions {
+    margin-left: 12px;
+    display: inline-flex;
+    gap: 4px;
+    vertical-align: middle;
+  }
+  .ctx-actions .feed-btn.small {
+    font-size: 10px;
+    padding: 1px 6px;
+    min-height: 18px;
+  }
 
   .shown-ctx {
-    margin: 8px 12px 4px;
-    padding: 6px 10px;
-    background: rgba(167, 139, 250, 0.06);
-    border: 1px solid rgba(167, 139, 250, 0.2);
-    border-radius: 6px;
-    font-size: 11px;
+    margin: 0;
+    padding: 4px 8px;
+    background: rgba(167, 139, 250, 0.04);
+    border: 1px solid rgba(167, 139, 250, 0.15);
+    border-radius: 4px;
+    font-size: 12px;
+    width: 100%;
   }
   .shown-ctx-head {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--lavend);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     font-family: var(--font-mono);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
   .shown-ctx-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 0;
+    padding: 1px 0;
     font-family: var(--font-mono);
+    font-size: 12px;
   }
   .shown-ctx-item .p {
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 70%;
-  }
-  .context-below .shown-ctx-item .p {
-    max-width: 85%; /* wider in the bottom bar on large screens */
+    max-width: 80%;
   }
 
-  .feed-ctx-row {
-    display: flex;
-    gap: 6px;
-    padding: 0;
-    flex-wrap: wrap;
-  }
   .feed-btn {
     font-size: 10px;
     padding: 2px 8px;
@@ -1784,60 +2037,54 @@
   }
   .feed-btn:disabled { opacity: 0.5; cursor: default; }
 
-  /* Post-prompt bar below the input: metrics + suggestive + wider context */
+  /* Post-prompt bar below the input: metrics (with ctx nums on right) + context list at bottom */
   .post-prompt-bar {
-    padding: 4px 0 8px; /* full width on large desktop */
+    padding: 4px 0 8px;
     border-top: 1px solid rgba(42,42,58,0.2);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     font-size: 13px;
     width: 100%;
   }
   .post-prompt-bar .ctx-bar,
   .post-prompt-bar .stats,
-  .post-prompt-bar .feed-ctx-row,
   .post-prompt-bar .context-below {
     padding-left: 32px;
     padding-right: 32px;
   }
 
-  /* Make ctx taller and more prominent */
+  /* ctx taller, track visible, numbers pulled right via .ctx-nums */
   .ctx-bar {
-    padding: 6px 0;
+    padding: 4px 0;
     font-size: 13px;
   }
   .ctx-track {
     height: 8px;
   }
-  .ctx-text {
-    font-size: 12px;
-  }
 
-  /* Bottom sections: group metrics, actions, context for better readability on large screens */
   .bottom-metrics {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
     flex-wrap: wrap;
-  }
-  .bottom-actions {
-    display: flex;
-    gap: 8px;
   }
   .bottom-metrics .stats {
     font-size: 12px;
     color: var(--dim);
     font-family: var(--font-mono);
     white-space: nowrap;
+    margin-left: 12px;
   }
 
   .context-below {
-    background: rgba(167, 139, 250, 0.04);
-    border: 1px solid rgba(167, 139, 250, 0.15);
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 4px 8px;
+    background: rgba(167,139,250,0.04);
+    border: 1px solid rgba(167,139,250,0.15);
     border-radius: 4px;
-    padding-top: 6px;
-    padding-bottom: 6px;
   }
   .context-below .shown-ctx-head {
     font-size: 11px;
@@ -1849,22 +2096,6 @@
   }
   .context-below .shown-ctx-item .p {
     max-width: 80%;
-  }
-
-  /* Make feed buttons more readable */
-  .feed-ctx-row .feed-btn {
-    font-size: 11px;
-    padding: 3px 10px;
-    min-height: 26px;
-  }
-  .context-below {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
-    padding: 4px 8px;
-    background: rgba(167,139,250,0.04);
-    border: 1px solid rgba(167,139,250,0.15);
-    border-radius: 4px;
   }
 
   .mode-indicator {
@@ -1886,6 +2117,38 @@
   .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 5px 12px; border-radius: 4px; font-size: 13px; font-family: var(--font-mono); cursor: pointer; min-height: 30px; }
   .chat-mode-bar button.active { background: var(--bg-elevated); color: var(--text); border-color: rgba(167,139,250,0.4); font-weight: 600; }
   .chat-mode-bar button:hover { color: var(--text); background: rgba(42,42,58,0.5); }
+
+  /* chat-subnav: subtabs under the main Chat tab (e.g. pure Chat view vs combined Chat+Terminal split).
+     Replaces the old accessory "Chat+term" button that used to appear in the primary nav.
+     Keeps the top-level tab list clean and consistent with the "subtabs under Chat" pattern (Prompt/Memory/Tools on mobile, now Terminal too). */
+  .chat-subnav {
+    display: flex;
+    gap: 4px;
+    padding: 4px 12px;
+    background: rgba(42, 42, 58, 0.25);
+    border-bottom: 1px solid rgba(42, 42, 58, 0.35);
+  }
+  .chat-subnav button {
+    background: rgba(28, 33, 40, 0.6);
+    border: 1px solid rgba(42, 42, 58, 0.5);
+    color: var(--text-secondary);
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    min-height: 26px;
+  }
+  .chat-subnav button.active {
+    background: var(--bg-elevated);
+    color: var(--text);
+    border-color: rgba(167, 139, 250, 0.4);
+    font-weight: 600;
+  }
+  .chat-subnav button:hover:not(.active) {
+    color: var(--text);
+    background: rgba(42, 42, 58, 0.4);
+  }
 
   /* Editor tabs (Context / Prompt / Memory / Source / Kv / etc.)
      Ported from gemma-code reference (~/.worktrees/unified-pkg/src/app/App.svelte).
@@ -2822,6 +3085,24 @@
       border-color: rgba(167, 139, 250, 0.4);
     }
 
+    /* chat-subnav on mobile: make the Chat/Terminal subtabs full-width and touch-friendly like the editor subtabs */
+    .chat-subnav {
+      width: 100%;
+      gap: 2px;
+      padding: 4px 8px;
+      background: rgba(42, 42, 58, 0.3);
+      border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .chat-subnav button {
+      flex: 1 0 auto;
+      font-size: 11px;
+      padding: 4px 8px;
+      min-height: 30px;
+      border-radius: 4px;
+    }
+
     /* General content tightening */
     .input-row {
       padding: 8px 10px;
@@ -2837,7 +3118,7 @@
       font-size: 12px;
     }
 
-    /* Mobile adjustments for post-prompt / ctx */
+    /* Mobile adjustments for post-prompt / ctx (numbers right on wide, stack nicely narrow; buttons in ctx head) */
     .post-prompt-bar {
       gap: 6px;
       font-size: 12px;
@@ -2845,20 +3126,27 @@
     .ctx-bar {
       font-size: 12px;
       padding: 4px 0;
+      flex-wrap: wrap;
     }
     .ctx-track {
       height: 6px;
+      min-width: 60px;
+    }
+    .ctx-nums {
+      font-size: 11px;
+      margin-left: 6px;
     }
     .bottom-metrics {
       flex-direction: column;
       align-items: flex-start;
       gap: 4px;
     }
-    .bottom-actions {
-      flex-wrap: wrap;
-    }
     .context-below .shown-ctx-item .p {
       max-width: 100%;
+    }
+    .ctx-actions .feed-btn.small {
+      font-size: 9px;
+      padding: 0 4px;
     }
 
     /* Markdown / pre blocks */

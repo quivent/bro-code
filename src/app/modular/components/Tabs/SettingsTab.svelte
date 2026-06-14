@@ -101,6 +101,106 @@
     settingsSection = s;
     onSection(s);
   }
+
+  // --- Web backend + auth (casual, LS + direct fetch, dispatch to host for invoke switch) ---
+  function saveWebBackendUrl() {
+    const el = document.getElementById('webbe-url') as HTMLInputElement | null;
+    const v = (el?.value || '').trim();
+    if (!v) return;
+    localStorage.setItem('bro-web:backend-url', v);
+    const st = document.getElementById('webbe-status');
+    if (st) st.textContent = `URL saved: ${v}. Now log in (or reload).`;
+    window.dispatchEvent(new CustomEvent('bro-web-auth-changed'));
+  }
+
+  async function doWebLogin() {
+    const uel = document.getElementById('webbe-user') as HTMLInputElement | null;
+    const pel = document.getElementById('webbe-pass') as HTMLInputElement | null;
+    const urlEl = document.getElementById('webbe-url') as HTMLInputElement | null;
+    const user = (uel?.value || '').trim();
+    const pass = (pel?.value || '');
+    let base = (urlEl?.value || localStorage.getItem('bro-web:backend-url') || '').trim();
+    const st = document.getElementById('webbe-status');
+    if (!user || !pass) { if (st) st.textContent = 'username + password required'; return; }
+    if (!base) { if (st) st.textContent = 'set backend URL first'; return; }
+    try {
+      const res = await fetch(base.replace(/\/$/, '') + '/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: pass })
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `login failed (${res.status})`);
+      }
+      const data = await res.json();
+      localStorage.setItem('bro-web:auth-token', data.token);
+      localStorage.setItem('bro-web:backend-url', base);
+      if (st) st.textContent = `Logged in as ${data.user || user}. Real FS/tools now via backend.`;
+      window.dispatchEvent(new CustomEvent('bro-web-auth-changed'));
+
+      // One-time best-effort migration: copy anything that was living only in browser localStorage
+      // (the pure-web 'bro-web:setting:*' keys) into the now-authenticated per-user server storage
+      // (~/.bro-users/<user>/bro/web-settings.json). Prevents the "lost my endpoints" feeling
+      // the first time someone enables the companion backend.
+      try {
+        const prefix = 'bro-web:setting:';
+        const migrated: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(prefix)) {
+            const short = k.slice(prefix.length);
+            const val = localStorage.getItem(k);
+            if (val !== null) {
+              await fetch(base + '/api/invoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
+                body: JSON.stringify({ cmd: 'set_setting', args: { key: short, value: val } })
+              }).catch(() => {});
+              migrated.push(short);
+            }
+          }
+        }
+        if (migrated.length && st) {
+          st.textContent += ` (migrated ${migrated.length} setting(s) from browser to server)`;
+        }
+      } catch (migErr) {
+        // non-fatal; next load will still have the LS side until user saves something
+      }
+    } catch (e: any) {
+      if (st) st.textContent = `Login error: ${e.message}`;
+    }
+  }
+
+  function doWebLogout() {
+    localStorage.removeItem('bro-web:auth-token');
+    const st = document.getElementById('webbe-status');
+    if (st) st.textContent = 'Logged out (token cleared). URL kept for re-login.';
+    window.dispatchEvent(new CustomEvent('bro-web-auth-changed'));
+  }
+
+  async function testWebBackend() {
+    const base = (localStorage.getItem('bro-web:backend-url') || (document.getElementById('webbe-url') as HTMLInputElement | null)?.value || '').replace(/\/$/, '');
+    const token = localStorage.getItem('bro-web:auth-token');
+    const st = document.getElementById('webbe-status');
+    if (!base) { if (st) st.textContent = 'no backend URL'; return; }
+    try {
+      const headers: any = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const r = await fetch(base + '/api/me', { headers });
+      if (r.ok) {
+        const j = await r.json();
+        if (st) st.textContent = `OK — authed as ${j.user || 'unknown'}. Backend responding.`;
+      } else if (r.status === 401) {
+        if (st) st.textContent = '401 — need to log in (or token expired).';
+      } else {
+        if (st) st.textContent = `${r.status} from /api/me`;
+      }
+    } catch (e: any) {
+      if (st) st.textContent = `Test error: ${e.message} (is the backend up on that URL?)`;
+    }
+  }
+
+  // (Prefill of the backend URL input is best-effort via the Test/Login buttons reading LS.
+  //  The Clear button gives an easy escape hatch if a bad backend URL made things slow/unresponsive.)
 </script>
 
 <main class="editor-main">
@@ -144,22 +244,27 @@
     <div class="section-header">
       <div>
         <div class="section-title">Registered Endpoints</div>
-        <div class="section-hint">Drag or arrows to reorder priority (top = highest). For simple bases we auto-append the standard /v1/chat/completions. For remote or custom servers, paste the *exact full* working completions URL (it will be used as-is if it contains "completions"). Active endpoint powers chat + health.</div>
+        <div class="section-hint">Drag or use arrows to set priority (top = preferred). Simple URLs auto-complete to /v1/chat/completions. For custom remotes, paste the full working completions URL. Active one drives chat + ctx window + health probes.</div>
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button class="reload-btn" onclick={onRefreshAllHealth}>Refresh all</button>
+      <div class="endpoint-header-controls">
+        <button class="reload-btn" onclick={onRefreshAllHealth}>Refresh health</button>
         {#if !appSettings.endpoints.some((e: any) => e.url && e.url.startsWith('http://127.0.0.1'))}
-          <button class="reload-btn" onclick={doAddLocal} title="http://127.0.0.1:{appSettings.localPort} · mlx-community/gemma-4-31b-it-4bit">+ Local gemma</button>
+          <button class="reload-btn" onclick={doAddLocal} title="Add local mlx-community/gemma on {appSettings.localPort}">+ Local</button>
         {/if}
-        <button class="reload-btn" onclick={onAddEndpoint}>Add</button>
-        <span style="margin-left:8px; opacity:0.8;">local port</span>
-        <input type="number" bind:value={appSettings.localPort} min="1024" max="65535" style="width:62px; font-size:11px;" title="Port used for +Local and health (save+sync below)" />
-        <button class="small-btn" onclick={() => { onSaveLocalPort(); onSyncLocalPorts(); }} title="Persist port and update any 127.0.0.1 Local endpoint(s) to this port">apply+sync</button>
+        <button class="reload-btn primary" onclick={onAddEndpoint}>+ Endpoint</button>
+        <div class="port-control">
+          <span>port</span>
+          <input type="number" bind:value={appSettings.localPort} min="1024" max="65535" title="Local inference port" />
+          <button class="small-btn" onclick={() => { onSaveLocalPort(); onSyncLocalPorts(); }} title="Save + sync local endpoint URLs">sync</button>
+        </div>
       </div>
     </div>
 
     {#if appSettings.endpoints.length === 0}
-      <div class="empty">No endpoints yet. Add one below.</div>
+      <div class="empty">
+        No endpoints yet.<br>
+        <span style="opacity:0.7">Add a remote one or hit <strong>+ Local</strong> for the built-in gemma on the current port.</span>
+      </div>
     {/if}
 
     {#each appSettings.endpoints as ep, i (ep.id)}
@@ -199,8 +304,8 @@
 
         <div class="ep-status">
           {#if ep.lastHealth}
-            <span class={ep.lastHealth.ok ? 'health-ok' : 'health-bad'} title={ep.lastHealth.message}>
-              {ep.lastHealth.ok ? '●' : '●'} {ep.lastHealth.message}
+            <span class="health-pill {ep.lastHealth.ok ? 'ok' : 'bad'}" title={ep.lastHealth.message}>
+              {ep.lastHealth.ok ? '✓' : '✕'} {ep.lastHealth.message.length > 18 ? ep.lastHealth.message.slice(0,15)+'…' : ep.lastHealth.message}
             </span>
           {/if}
         </div>
@@ -246,7 +351,7 @@
             {@const ep = endpoints.find(e => e.id === editingId)}
             {#if ep?.availableModels?.length}
               <div class="form-models">
-                <span class="models-label">Available on server (click to set full model ID):</span>
+                <span class="models-label">Available on server — click chip to use exact ID:</span>
                 {#each ep.availableModels as m}
                   <button type="button" class="model-chip" onclick={() => { appSettings.formModel = m; }}>
                     {m}
@@ -265,9 +370,6 @@
           {/if}
         </div>
       </form>
-      <div class="form-hint">
-        Paste a base URL (e.g. <code>https://oracle.gemma.training</code> or with <code>/v1</code>) — we normalize it to the completions path. The <b>model</b> field is optional: leave it blank and we'll infer the exact ID by querying the server's <code>/v1/models</code> (on Test or automatically before chat). For multi-model servers, Test then pick from the chips or dropdown. Endpoints are tried top-to-bottom.
-      </div>
     </div>
   </div>
 
@@ -525,6 +627,32 @@
       <div class="setting-hint">Force a full sweep of /v1/models across every registered endpoint. Useful after spinning up a new oracle or when the agent "forgets" what models are actually available. Also refreshes health stats.</div>
     </div>
 
+    <!-- Web companion backend + user auth (talked about; fits the minimal JSON/console style) -->
+    <!-- Once configured + logged in, invoke() calls for read/write/run_shell/get_setting go to the real backend with your JWT.
+         Per-user homes: ~/.bro-users/<you>/bro/...   Create users on the server box first (see web-backend/server.js header). -->
+    <div class="setting web-backend-auth">
+      <div class="setting-label">Web Companion Backend + Auth</div>
+      <div class="web-backend-row">
+        <input class="setting-input" type="text" placeholder="http://localhost:3456 or https://bro.gemma.training" id="webbe-url" />
+        <button class="reload-btn" onclick={saveWebBackendUrl}>Set URL</button>
+      </div>
+      <div class="web-backend-row" style="margin-top:6px; gap:6px;">
+        <input class="setting-input small" type="text" placeholder="username" id="webbe-user" style="max-width:110px" />
+        <input class="setting-input small" type="password" placeholder="password" id="webbe-pass" style="max-width:110px" />
+        <button class="save-btn" onclick={doWebLogin}>Login</button>
+        <button class="reload-btn" onclick={doWebLogout}>Logout</button>
+        <button class="reload-btn" onclick={testWebBackend}>Test</button>
+        <button class="reload-btn" onclick={() => { localStorage.removeItem('bro-web:backend-url'); localStorage.removeItem('bro-web:auth-token'); const st=document.getElementById('webbe-status'); if(st) st.textContent='Backend config cleared. Using localStorage only. Reload or switch tabs to apply.'; window.dispatchEvent(new CustomEvent('bro-web-auth-changed')); }}>Clear &amp; use local only</button>
+      </div>
+      <div id="webbe-status" class="setting-hint" style="margin-top:4px;"></div>
+      <div class="setting-hint" style="font-size: 10px; opacity: 0.85;">
+        Storage for these settings (endpoints, temps, history limits, appearance, etc.):
+        <strong>see the note below + the web backend block</strong>.
+        In pure web: browser localStorage (devtools → Application → Local Storage, keys "bro-web:setting:*"). With backend+login: per-user file on the server machine at <code>~/.bro-users/&lt;username&gt;/bro/web-settings.json</code> (plain JSON, easy to backup/edit).
+      </div>
+      <div class="setting-hint">Stores URL + token in browser LS. After login, file ops / tools / settings hit the real per-user server side instead of localStorage. Poll for ctx window etc still works. Reload app after first login if needed.</div>
+    </div>
+
     <div class="danger-zone">
       <div class="section-title" style="color: var(--red);">Danger Zone</div>
       <button class="save-btn" style="background: rgba(239,68,68,0.15); border-color: var(--red);" onclick={onClearData}>
@@ -569,6 +697,14 @@
     color: var(--text-secondary); padding: 4px 12px; border-radius: 5px;
     cursor: pointer; font-size: 11px; font-family: var(--font-mono);
     transition: all 150ms ease;
+  }
+  .reload-btn.primary {
+    border-color: rgba(63,182,178,0.4);
+    color: #3fb6b2;
+  }
+  .reload-btn.primary:hover {
+    background: rgba(63,182,178,0.12);
+    border-color: rgba(63,182,178,0.6);
   }
 
   .settings-subnav {
@@ -617,8 +753,36 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 12px;
-    margin-bottom: 10px;
+    margin-bottom: 14px;
     flex-wrap: wrap;
+  }
+  .endpoint-header-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .port-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: #6f7a8a;
+    font-family: var(--font-mono);
+    background: rgba(28,33,40,0.4);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(42,42,58,0.4);
+  }
+  .port-control span { opacity: 0.7; }
+  .port-control input {
+    width: 52px;
+    font-size: 11px;
+    padding: 1px 4px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
   }
   .section-title {
     font-weight: 600;
@@ -637,168 +801,296 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 14px 16px;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 8px;
+    border-radius: 10px;
+    margin-bottom: 10px;
     background: var(--bg-secondary);
     font-size: 13px;
     width: 100%;
     box-sizing: border-box;
-    transition: border-color 150ms ease, box-shadow 150ms ease;
+    transition: border-color 150ms ease, box-shadow 150ms ease, transform 100ms ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .endpoint-row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: transparent;
+    transition: background 150ms ease;
   }
   .endpoint-row:hover {
-    border-color: rgba(167, 139, 250, 0.3);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border-color: rgba(167, 139, 250, 0.35);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-1px);
+  }
+  .endpoint-row:hover::before {
+    background: rgba(163, 113, 247, 0.5);
   }
   .endpoint-row.active {
     border-color: var(--lavend);
-    background: rgba(167, 139, 250, 0.08);
+    background: rgba(167, 139, 250, 0.06);
+  }
+  .endpoint-row.active::before {
+    background: var(--lavend);
   }
   .endpoint-row.dragging {
-    opacity: 0.6;
+    opacity: 0.5;
+    transform: scale(0.98);
   }
 
   .priority-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
-    min-width: 72px;
+    gap: 3px;
+    min-width: 78px;
+    padding-right: 6px;
+    border-right: 1px solid rgba(42,42,58,0.3);
   }
   .drag-grip {
     cursor: grab;
     color: var(--dim);
-    font-size: 15px;
-    padding: 0 4px;
+    font-size: 16px;
+    padding: 2px 6px 2px 2px;
+    user-select: none;
   }
   .icon-btn {
-    background: none;
-    border: 1px solid var(--border);
+    background: rgba(28,33,40,0.5);
+    border: 1px solid rgba(42,42,58,0.4);
     color: var(--text-secondary);
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
-    font-size: 11px;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    font-size: 10px;
     line-height: 1;
     cursor: pointer;
-    min-height: 28px;
+    min-height: 22px;
+    transition: all 100ms ease;
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: var(--bg-elevated);
+    color: var(--text);
   }
   .icon-btn:disabled {
-    opacity: 0.3;
+    opacity: 0.25;
     cursor: default;
   }
   .priority-num {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--dim);
-    margin-left: 4px;
-    min-width: 14px;
+    margin-left: 2px;
+    min-width: 12px;
+    font-family: var(--font-mono);
   }
 
   .ep-info {
     flex: 1;
     min-width: 0;
+    padding-right: 8px;
   }
   .ep-name {
     font-weight: 600;
     color: var(--text);
     font-size: 14px;
+    line-height: 1.2;
   }
   .ep-url {
     font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-size: 11px;
+    color: #8b9cb3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    margin-top: 1px;
   }
   .ep-model {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 240px;
+    max-width: 100%;
+    margin-top: 1px;
   }
   .ep-model span {
-    color: var(--text);
+    color: #c5d0e0;
+    font-family: var(--font-mono);
   }
 
   .ep-models {
-    font-size: 11px;
-    color: var(--dim);
+    font-size: 10px;
+    color: #6f7a8a;
     font-family: var(--font-mono);
     margin-top: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 240px;
+    opacity: 0.9;
   }
 
   .ep-status {
-    font-size: 12px;
-    min-width: 140px;
+    font-size: 11px;
+    min-width: 120px;
+    text-align: right;
+    flex-shrink: 0;
   }
-  .health-ok { color: var(--green); }
-  .health-bad { color: var(--red); }
+  .health-pill {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+  .health-pill.ok {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(52, 211, 153, 0.3);
+  }
+  .health-pill.bad {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(248, 113, 113, 0.3);
+  }
 
   .ep-actions {
     display: flex;
-    gap: 6px;
+    gap: 5px;
     align-items: center;
+    flex-shrink: 0;
   }
   .small-btn {
     background: rgba(28, 33, 40, 0.6);
     border: 1px solid rgba(42, 42, 58, 0.5);
     color: var(--text-secondary);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 10px;
     font-family: var(--font-mono);
     cursor: pointer;
-    min-height: 32px;
+    min-height: 28px;
     transition: all 120ms ease;
+    white-space: nowrap;
   }
   .small-btn:hover {
     color: var(--text);
     background: var(--bg-elevated);
+    border-color: rgba(167,139,250,0.4);
   }
   .small-btn.danger {
-    color: var(--red);
-    border-color: rgba(239,68,68,0.3);
+    color: #f87171;
+    border-color: rgba(239,68,68,0.35);
   }
-  .small-btn.test-btn.testing { opacity: 0.6; }
+  .small-btn.danger:hover {
+    background: rgba(248,113,113,0.15);
+    color: #f87171;
+  }
+  .small-btn.test-btn {
+    border-color: rgba(63,182,178,0.35);
+  }
+  .small-btn.test-btn:hover {
+    background: rgba(63,182,178,0.15);
+    color: #3fb6b2;
+  }
+  .small-btn.test-btn.testing { 
+    opacity: 0.7; 
+    pointer-events: none;
+  }
+  .small-btn:first-child { /* Use button */
+    background: rgba(52,211,153,0.12);
+    border-color: rgba(52,211,153,0.3);
+    color: #34d399;
+  }
+  .small-btn:first-child:hover {
+    background: rgba(52,211,153,0.2);
+  }
 
   .endpoint-form {
-    margin-top: 16px;
-    padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    max-width: 100%; /* ensure it can grow to fill large desktop screens */
+    margin-top: 20px;
+    padding: 18px 20px;
+    border: 1px solid rgba(42,42,58,0.6);
+    border-radius: 12px;
+    background: linear-gradient(145deg, var(--bg-secondary) 0%, rgba(22,27,34,0.85) 100%);
+    max-width: 100%;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    position: relative;
+  }
+  .endpoint-form::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(to right, #3fb6b2, #a371f7, #f0883e);
+    border-radius: 12px 12px 0 0;
+    opacity: 0.7;
   }
   .form-title {
     font-size: 14px;
     font-weight: 600;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .form-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(42,42,58,0.4);
   }
   .form-grid {
     display: grid;
     /* On large desktop, give the URL field (middle) much more room since endpoints URLs are long */
-    grid-template-columns: 180px 1fr 220px;
-    gap: 12px;
+    grid-template-columns: 170px 1fr 210px;
+    gap: 10px;
     margin-bottom: 12px;
   }
   .form-actions {
     display: flex;
     gap: 8px;
     align-items: center;
+    padding-top: 4px;
   }
-  .form-hint {
-    font-size: 12px;
-    color: var(--dim);
-    margin-top: 8px;
-    line-height: 1.4;
+
+  .form-models {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+  }
+  .models-label {
+    font-size: 10px;
+    color: #6f7a8a;
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+  }
+  .model-chip {
+    display: inline-block;
+    background: rgba(63,182,178,0.1);
+    border: 1px solid rgba(63,182,178,0.25);
+    color: #3fb6b2;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin: 2px 4px 2px 0;
+    cursor: pointer;
+    transition: all 100ms ease;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .model-chip:hover {
+    background: rgba(63,182,178,0.2);
+    border-color: rgba(63,182,178,0.5);
+    color: #5fd0cc;
+    transform: translateY(-1px);
   }
 
   .setting {
@@ -946,11 +1238,20 @@
     cursor: default;
   }
 
+  /* Web backend auth block (compact, fits in Advanced) */
+  .web-backend-auth .web-backend-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .web-backend-auth .setting-input { min-width: 160px; }
+  .web-backend-auth .setting-hint { font-size: 11px; }
+
   .empty {
     color: var(--dim);
-    font-size: 14px;
-    padding: 20px 0;
+    font-size: 13px;
+    padding: 26px 18px;
     text-align: center;
+    line-height: 1.45;
+    background: rgba(28, 33, 40, 0.35);
+    border: 1px dashed rgba(42,42,58,0.5);
+    border-radius: 8px;
   }
 
   .danger-zone {

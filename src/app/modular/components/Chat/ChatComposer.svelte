@@ -284,14 +284,16 @@
 <!-- Footer / inputs (ctx bar, dual inputs, solo input) -->
 <footer>
   {#if chatMode === 'solo'}
-    <div class="ctx-bar" title="Context = full message history sent with each request. Usage estimated at 4 chars/token; window is the server's max_model_len.">
+    <div class="ctx-bar" title="Context usage (history + system). Polled window from active /v1/models. Numbers on right; bar when used.">
       <span class="ctx-label">ctx</span>
-      <div class="ctx-track">
-        <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow ? Math.max(ctxPct, 1.5) : 0}%"></div>
-      </div>
-      <div class="ctx-text">
+      {#if ctxUsedTokens > 0 || ctxWindow}
+        <div class="ctx-track">
+          <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow && ctxUsedTokens > 0 ? Math.max(ctxPct, 2) : 0}%"></div>
+        </div>
+      {/if}
+      <div class="ctx-nums">
         {#if ctxWindow}
-          {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · {(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left
+          {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · <span class="ctx-left">{(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left</span>
         {:else}
           ~{(ctxUsedTokens / 1000).toFixed(1)}k used · window unknown
         {/if}
@@ -367,13 +369,14 @@
   .exec-always { background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.3); color: var(--lavend); }
   .exec-no { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #f87171; }
 
-  .ctx-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; font-size: 11px; color: var(--muted); font-family: var(--font-mono); border-top: 1px solid rgba(42,42,58,0.25); }
+  .ctx-bar { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
   .ctx-label { font-weight: 600; letter-spacing: 0.5px; }
-  .ctx-track { flex: 1; height: 4px; background: rgba(42,42,58,0.4); border-radius: 2px; overflow: hidden; }
+  .ctx-track { flex: 1 1 auto; min-width: 60px; height: 7px; background: rgba(42,42,58,0.45); border-radius: 3px; overflow: hidden; }
   .ctx-fill { height: 100%; background: var(--lavend); transition: width 200ms ease; }
   .ctx-fill.warn { background: #fbbf24; }
   .ctx-fill.crit { background: #f87171; }
-  .ctx-text { font-size: 10px; }
+  .ctx-nums { flex: none; margin-left: auto; font-size: 11px; color: var(--text); white-space: nowrap; }
+  .ctx-nums .ctx-left { color: var(--dim); font-size: 10px; }
 
   .input-row { padding: 8px; border-top: 1px solid rgba(42,42,58,0.3); }
   .input-row textarea { width: 100%; font-size: 13px; background: var(--bg-secondary); color: var(--text); border: 1px solid rgba(42,42,58,0.5); border-radius: 6px; padding: 8px 10px; resize: none; font-family: var(--font-sans); line-height: 1.4; }
