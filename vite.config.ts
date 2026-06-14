@@ -53,15 +53,29 @@ export default defineConfig({
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
   server: {
-    port: 5314,
-    strictPort: true,
-    // Tauri expects a fixed host for the dev server
-    host: '127.0.0.1',
-    hmr: {
-      protocol: 'ws',
-      host: '127.0.0.1',
-      port: 5314,
-    },
+    port: process.env.WEB_DEV === '1' || process.env.WEB_DEV === 'true' ? 5173 : 5314,
+    strictPort: !(process.env.WEB_DEV === '1' || process.env.WEB_DEV === 'true'),
+    // Tauri expects a fixed host for the dev server.
+    // For web/dev remote mode (see WEB_MODE_PICKUP.md), we bind 0.0.0.0 and relax HMR.
+    host: process.env.WEB_DEV === '1' || process.env.WEB_DEV === 'true' ? '0.0.0.0' : '127.0.0.1',
+    hmr: (process.env.WEB_DEV === '1' || process.env.WEB_DEV === 'true')
+      ? {
+          // When served via Caddy (TLS terminator) on https://bro.gemma.training,
+          // tell the browser client to open its HMR WebSocket as wss:// to the public name.
+          // Vite keeps the actual WS listener on the local dev port (5173); Caddy proxies the upgrade.
+          // Do not set a public port here or Vite will try (and fail) to bind a listener on it.
+          protocol: 'wss',
+          host: 'bro.gemma.training',
+        }
+      : {
+          protocol: 'ws',
+          host: '127.0.0.1',
+          port: 5314,
+        },
+    // Allow access by the public domain (and LAN hostnames) without Vite's "invalid host header" block.
+    allowedHosts: (process.env.WEB_DEV === '1' || process.env.WEB_DEV === 'true')
+      ? ['.gemma.training', 'localhost', '127.0.0.1', '0.0.0.0']
+      : undefined,
     watch: {
       // Watch for changes in linked packages too
       ignored: ['!**/node_modules/@mercenary/**'],

@@ -122,7 +122,7 @@
   {/if}
 </main>
 
-<style lang="postcss">
+<style>
   /* transcript styles (safely pulled from gemma-code reference) */
   .transcript-list { flex: 1; overflow-y: auto; padding: 8px 20px; }
 

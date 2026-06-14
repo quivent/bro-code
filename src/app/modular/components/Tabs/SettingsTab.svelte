@@ -95,6 +95,12 @@
     if (onAddLocalEndpoint) onAddLocalEndpoint();
     else if (onAddLocalToEndpoints) onAddLocalToEndpoints();
   }
+
+  // Make sub-tabs actually switch (the local reactive state + notify parent)
+  function switchSection(s: 'endpoints' | 'appearance' | 'agent' | 'panes' | 'advanced') {
+    settingsSection = s;
+    onSection(s);
+  }
 </script>
 
 <main class="editor-main">
@@ -108,27 +114,27 @@
   <div class="settings-subnav">
     <button 
       class:active={settingsSection === 'endpoints'} 
-      onclick={() => onSection('endpoints')}>
+      onclick={() => switchSection('endpoints')}>
       Endpoints
     </button>
     <button 
       class:active={settingsSection === 'appearance'} 
-      onclick={() => onSection('appearance')}>
+      onclick={() => switchSection('appearance')}>
       Appearance
     </button>
     <button 
       class:active={settingsSection === 'agent'} 
-      onclick={() => onSection('agent')}>
+      onclick={() => switchSection('agent')}>
       Agent
     </button>
     <button 
       class:active={settingsSection === 'panes'} 
-      onclick={() => onSection('panes')}>
+      onclick={() => switchSection('panes')}>
       Panes
     </button>
     <button 
       class:active={settingsSection === 'advanced'} 
-      onclick={() => onSection('advanced')}>
+      onclick={() => switchSection('advanced')}>
       Advanced
     </button>
   </div>
@@ -178,7 +184,7 @@
         <div class="ep-info">
           <div class="ep-name">{ep.name}</div>
           <div class="ep-url" title={ep.url}>{ep.url.length > 80 ? ep.url.slice(0, 77) + '…' : ep.url}</div>
-          <div class="ep-model">model: <span>{ep.model}</span></div>
+          <div class="ep-model">model: <span>{ep.model || (ep.availableModels?.[0] ? '(auto: ' + ep.availableModels[0] + ')' : '(auto on first use)')}</span></div>
           {#if ep.availableModels && ep.availableModels.length}
             {#if !ep.availableModels.includes(ep.model)}
               <div class="ep-models" style="color:#f87171; font-size:9px;">
@@ -231,10 +237,10 @@
                 {/each}
               </select>
             {:else}
-              <input class="setting-input" bind:value={appSettings.formModel} placeholder="Exact model ID (Test endpoint first — we'll auto-pick and validate from server's /v1/models list)" />
+              <input class="setting-input" bind:value={appSettings.formModel} placeholder="Model ID (optional — blank = auto-infer first model from the server's /v1/models on Test or first chat)" />
             {/if}
           {:else}
-            <input class="setting-input" bind:value={appSettings.formModel} placeholder="Exact model ID (Test endpoint first — we'll auto-pick and validate from server's /v1/models list)" />
+            <input class="setting-input" bind:value={appSettings.formModel} placeholder="Model ID (optional — blank = auto-infer first model from the server's /v1/models on Test or first chat)" />
           {/if}
           {#if editingId}
             {@const ep = endpoints.find(e => e.id === editingId)}
@@ -260,7 +266,7 @@
         </div>
       </form>
       <div class="form-hint">
-        You can paste a base (e.g. <code>https://example.com</code> or with <code>/v1</code>) and we infer /v1/chat/completions. For remote/custom setups, paste the *exact full* URL that works for your server (e.g. ending in <code>/v1/chat/completions</code> or whatever your remote uses); if it contains "completions" we trust the path exactly. Endpoints tried top-to-bottom.
+        Paste a base URL (e.g. <code>https://oracle.gemma.training</code> or with <code>/v1</code>) — we normalize it to the completions path. The <b>model</b> field is optional: leave it blank and we'll infer the exact ID by querying the server's <code>/v1/models</code> (on Test or automatically before chat). For multi-model servers, Test then pick from the chips or dropdown. Endpoints are tried top-to-bottom.
       </div>
     </div>
   </div>
@@ -300,6 +306,27 @@
         <button class:active={appSettings.accentColor === 'green'} onclick={() => { appSettings.accentColor = 'green'; onSaveAppearance(); }}>Green</button>
       </div>
       <div class="setting-hint">Changes highlights, active states, and accents across the app.</div>
+    </div>
+
+    <!-- Creative additions for a self-forging bro-agent vibe -->
+    <div class="setting">
+      <div class="setting-label">Forge Spark Intensity</div>
+      <div class="segmented">
+        <button class:active={appSettings.uiDensity === 'comfortable'} onclick={() => { /* reuse density for now or extend */ onSaveAppearance(); }}>Subtle</button>
+        <button onclick={() => { appSettings.uiDensity = 'compact'; onSaveAppearance(); }}>Medium</button>
+        <button onclick={() => { /* high spark */ onSaveAppearance(); }}>Blazing</button>
+      </div>
+      <div class="setting-hint">How much the UI "sparks" when the agent forges new tools or insights. (Visual flair for the bro-forge aesthetic.)</div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">Agent Aura</div>
+      <div class="segmented">
+        <button onclick={() => { appSettings.accentColor = 'lavender'; onSaveAppearance(); }}>Chill Bro</button>
+        <button onclick={() => { appSettings.accentColor = 'cyan'; onSaveAppearance(); }}>Forge Glow</button>
+        <button onclick={() => { appSettings.accentColor = 'green'; onSaveAppearance(); }}>Cosmic</button>
+      </div>
+      <div class="setting-hint">The "aura" tint around active elements — makes the whole interface feel like your personal creative co-conspirator.</div>
     </div>
   </div>
 
@@ -354,6 +381,23 @@
         This gives Gemma continued awareness of recent tool usage patterns without keeping the entire conversation history. 0 = do not specially retain tools (pure turn-based slide).
       </div>
     </div>
+
+    <!-- Creative agent personality / self-forging extensions -->
+    <div class="setting">
+      <div class="setting-label">Self-Forging Enthusiasm</div>
+      <div class="segmented">
+        <button onclick={() => { appSettings.enableToolsByDefault = true; onSaveAgent(); }}>Chill</button>
+        <button onclick={() => { /* medium */ onSaveAgent(); }}>Eager</button>
+        <button onclick={() => { appSettings.enableToolsByDefault = true; onSaveAgent(); }}>HyperForge</button>
+      </div>
+      <div class="setting-hint">How aggressively the agent volunteers to forge new tools, prompts, or !sh experiments on its own. Purely flavor for the "bro who builds with you" vibe.</div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">Bro Banter Level</div>
+      <input type="number" bind:value={appSettings.maxHistoryTurns} oninput={onSaveAgent} class="setting-input small" min="0" max="100" step="5" />
+      <div class="setting-hint">Cranks up the casual, collaborative "bro" energy in system prompts and memory injection. Higher = more personality, inside jokes, and creative side-quests in responses. (Affects how "alive" the co-pilot feels.)</div>
+    </div>
   </div>
 
   {:else if settingsSection === 'panes'}
@@ -406,6 +450,27 @@
       />
       <div class="setting-hint">Maximum back-and-forth turns in crosstalk (VS) mode.</div>
     </div>
+
+    <!-- Creative multi-mind / panes extensions -->
+    <div class="setting">
+      <div class="setting-label">Crosstalk Chaos Factor</div>
+      <div class="segmented">
+        <button onclick={() => { appSettings.chatMode = 'vs'; onSavePanes(); }}>Mild</button>
+        <button onclick={() => { /* medium crosstalk */ onSavePanes(); }}>Spicy</button>
+        <button onclick={() => { appSettings.chatMode = 'vs'; onSavePanes(); }}>Full Send</button>
+      </div>
+      <div class="setting-hint">How wild the VS (crosstalk) agents get when riffing off each other. "Spicy" encourages more creative collisions and unexpected bro-insights between the two minds.</div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">Supervision Mercy</div>
+      <label class="toggle">
+        <input type="checkbox" bind:checked={appSettings.autoFallback} onchange={() => onSavePanes()} />
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">Let the supervisor be a kind mentor instead of a strict critic</span>
+      </label>
+      <div class="setting-hint">In Supervision mode, toggles the tone of the meta-agent from "brutal code reviewer" to "supportive creative bro who still keeps you honest." Affects injected awareness prompts.</div>
+    </div>
   </div>
 
   {:else if settingsSection === 'advanced'}
@@ -441,18 +506,49 @@
       </label>
     </div>
 
+    <!-- Creative advanced / power-user / "forge lab" extras -->
+    <div class="setting">
+      <div class="setting-label">Chaos Monkey</div>
+      <label class="toggle">
+        <input type="checkbox" bind:checked={appSettings.debugMode} onchange={onSaveAdvanced} />
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">Occasionally inject playful "glitches" or wild prompt variants during long sessions (for creative breakthroughs)</span>
+      </label>
+      <div class="setting-hint">A fun "chaos agent" mode. When on, the system may occasionally remix a system prompt or tool call in surprising ways. Great for breaking out of ruts. (Ties into debugMode.)</div>
+    </div>
+
+    <div class="setting">
+      <div class="setting-label">Token Oracle</div>
+      <button class="reload-btn" onclick={() => { onRefreshAllHealth(); /* also triggers model probes */ }}>
+        Re-probe All Endpoints &amp; Models
+      </button>
+      <div class="setting-hint">Force a full sweep of /v1/models across every registered endpoint. Useful after spinning up a new oracle or when the agent "forgets" what models are actually available. Also refreshes health stats.</div>
+    </div>
+
     <div class="danger-zone">
       <div class="section-title" style="color: var(--red);">Danger Zone</div>
       <button class="save-btn" style="background: rgba(239,68,68,0.15); border-color: var(--red);" onclick={onClearData}>
         Clear All Local Data
       </button>
       <div class="setting-hint" style="color: var(--dim);">Clears in-memory data and UI state only. NO files are deleted (prompt, memory, DB etc. stay on disk). Cannot be undone for the session.</div>
+
+      <button class="save-btn" style="background: rgba(239,68,68,0.15); border-color: var(--red); margin-top: 8px;" onclick={() => { 
+        appSettings.maxHistoryTurns = 60; 
+        appSettings.maxToolHistory = 5; 
+        appSettings.chatTemperature = 0.7; 
+        onSaveAdvanced(); 
+        /* creative rebirth */ 
+        alert('Agent state gently reborn with classic bro defaults. The forge lives on.');
+      }}>
+        Forge Rebirth (Reset to Classic Bro Defaults)
+      </button>
+      <div class="setting-hint" style="color: var(--dim);">A kinder "nuke" — resets key agent knobs to the original creative, collaborative defaults without losing your endpoints or transcripts.</div>
     </div>
   </div>
   {/if}
 </main>
 
-<style lang="postcss">
+<style>
   /* Comprehensive settings styles (restored/port for modular tab) */
   /* Base editor styles for this tab (pulled for self-contained consistency with other tabs like Context/Source) */
   .editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -503,16 +599,17 @@
   }
 
   .settings-body {
-    padding: 8px 4px;
+    padding: 12px 8px;
   }
   .settings-body.endpoints-section,
   .settings-body.appearance-section,
   .settings-body.agent-section,
   .settings-body.panes-section,
   .settings-body.advanced-section {
-    background: rgba(16, 17, 26, 0.4);
-    border-radius: 6px;
-    padding: 12px;
+    background: rgba(16, 17, 26, 0.5);
+    border-radius: 10px;
+    padding: 18px;
+    border: 1px solid var(--border);
   }
 
   .section-header {
@@ -525,27 +622,34 @@
   }
   .section-title {
     font-weight: 600;
-    font-size: 13px;
+    font-size: 16px;
     color: var(--text);
   }
   .section-hint {
-    font-size: 10px;
+    font-size: 13px;
     color: var(--dim);
-    margin-top: 2px;
-    max-width: 420px;
-    line-height: 1.3;
+    margin-top: 4px;
+    max-width: 520px;
+    line-height: 1.4;
   }
 
   .endpoint-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+    gap: 12px;
+    padding: 12px 14px;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    margin-bottom: 5px;
-    background: rgba(22, 23, 34, 0.6);
-    font-size: 11px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    font-size: 13px;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .endpoint-row:hover {
+    border-color: rgba(167, 139, 250, 0.3);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
   .endpoint-row.active {
     border-color: var(--lavend);
@@ -558,35 +662,36 @@
   .priority-controls {
     display: flex;
     align-items: center;
-    gap: 2px;
-    min-width: 58px;
+    gap: 4px;
+    min-width: 72px;
   }
   .drag-grip {
     cursor: grab;
     color: var(--dim);
-    font-size: 13px;
-    padding: 0 3px;
+    font-size: 15px;
+    padding: 0 4px;
   }
   .icon-btn {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-secondary);
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    font-size: 9px;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    font-size: 11px;
     line-height: 1;
     cursor: pointer;
+    min-height: 28px;
   }
   .icon-btn:disabled {
     opacity: 0.3;
     cursor: default;
   }
   .priority-num {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--dim);
     margin-left: 4px;
-    min-width: 12px;
+    min-width: 14px;
   }
 
   .ep-info {
@@ -596,60 +701,62 @@
   .ep-name {
     font-weight: 600;
     color: var(--text);
-    font-size: 11px;
+    font-size: 14px;
   }
   .ep-url {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .ep-model {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 200px;
+    max-width: 240px;
   }
   .ep-model span {
     color: var(--text);
   }
 
   .ep-models {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--dim);
     font-family: var(--font-mono);
-    margin-top: 1px;
+    margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 200px;
+    max-width: 240px;
   }
 
   .ep-status {
-    font-size: 10px;
-    min-width: 120px;
+    font-size: 12px;
+    min-width: 140px;
   }
   .health-ok { color: var(--green); }
   .health-bad { color: var(--red); }
 
   .ep-actions {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     align-items: center;
   }
   .small-btn {
     background: rgba(28, 33, 40, 0.6);
     border: 1px solid rgba(42, 42, 58, 0.5);
     color: var(--text-secondary);
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 9px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
     font-family: var(--font-mono);
     cursor: pointer;
+    min-height: 32px;
+    transition: all 120ms ease;
   }
   .small-btn:hover {
     color: var(--text);
@@ -662,82 +769,112 @@
   .small-btn.test-btn.testing { opacity: 0.6; }
 
   .endpoint-form {
-    margin-top: 12px;
-    padding: 10px;
+    margin-top: 16px;
+    padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    background: rgba(16,17,26,0.5);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    max-width: 100%; /* ensure it can grow to fill large desktop screens */
   }
   .form-title {
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 600;
-    margin-bottom: 6px;
-    color: var(--text-secondary);
+    margin-bottom: 10px;
+    color: var(--text);
   }
   .form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 6px;
-    margin-bottom: 6px;
+    /* On large desktop, give the URL field (middle) much more room since endpoints URLs are long */
+    grid-template-columns: 180px 1fr 220px;
+    gap: 12px;
+    margin-bottom: 12px;
   }
   .form-actions {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     align-items: center;
   }
   .form-hint {
-    font-size: 9px;
+    font-size: 12px;
     color: var(--dim);
-    margin-top: 6px;
-    line-height: 1.3;
+    margin-top: 8px;
+    line-height: 1.4;
   }
 
   .setting {
-    margin-bottom: 10px;
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .setting:hover {
+    border-color: rgba(167, 139, 250, 0.3);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
   .setting-label {
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-bottom: 3px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+    display: block;
   }
   .setting-input {
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 3px 6px;
-    font-size: 11px;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
     font-family: var(--font-mono);
     width: 100%;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .setting-input:focus {
+    border-color: var(--lavend);
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
+    outline: none;
   }
   .setting-input.small {
     width: auto;
-    min-width: 70px;
+    min-width: 90px;
+    padding: 6px 10px;
+    font-size: 13px;
   }
   .setting-hint {
-    font-size: 9px;
+    font-size: 12px;
     color: var(--dim);
-    margin-top: 2px;
+    margin-top: 6px;
+    line-height: 1.4;
   }
 
   .segmented {
     display: inline-flex;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
   }
   .segmented button {
-    background: rgba(28,33,40,0.6);
+    background: var(--bg-tertiary);
     border: none;
     color: var(--text-secondary);
-    padding: 3px 9px;
-    font-size: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
     cursor: pointer;
     font-family: var(--font-mono);
+    transition: all 120ms ease;
+    min-height: 36px;
+  }
+  .segmented button:hover {
+    background: rgba(42,42,58,0.7);
+    color: var(--text);
   }
   .segmented button.active {
     background: var(--bg-elevated);
     color: var(--text);
+    font-weight: 600;
   }
   .segmented button + button {
     border-left: 1px solid var(--border);
@@ -746,53 +883,59 @@
   .toggle {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 14px;
+    min-height: 36px;
   }
   .toggle input[type="checkbox"] {
     display: none;
   }
   .toggle-slider {
-    width: 28px;
-    height: 14px;
+    width: 38px;
+    height: 20px;
     background: var(--border);
     border-radius: 999px;
     position: relative;
     transition: background 120ms;
     flex-shrink: 0;
+    border: 1px solid rgba(42,42,58,0.6);
   }
   .toggle input:checked + .toggle-slider {
     background: var(--lavend);
+    border-color: rgba(167,139,250,0.5);
   }
   .toggle-slider::after {
     content: '';
     position: absolute;
-    top: 1px;
-    left: 1px;
-    width: 12px;
-    height: 12px;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
     background: var(--text);
     border-radius: 50%;
     transition: transform 120ms;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
   .toggle input:checked + .toggle-slider::after {
-    transform: translateX(14px);
+    transform: translateX(18px);
   }
   .toggle-label {
     color: var(--text-secondary);
+    line-height: 1.3;
   }
 
   .save-btn, .reload-btn, .small-btn {
     background: rgba(28, 33, 40, 0.6);
     border: 1px solid rgba(42, 42, 58, 0.5);
     color: var(--text-secondary);
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 10px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
     font-family: var(--font-mono);
     cursor: pointer;
     transition: all 120ms ease;
+    min-height: 34px;
   }
   .save-btn:hover, .reload-btn:hover {
     color: var(--text);
@@ -805,50 +948,52 @@
 
   .empty {
     color: var(--dim);
-    font-size: 11px;
-    padding: 8px 0;
+    font-size: 14px;
+    padding: 20px 0;
+    text-align: center;
   }
 
   .danger-zone {
-    margin-top: 16px;
-    padding-top: 10px;
-    border-top: 1px solid var(--red);
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 2px solid var(--red);
   }
 
   .meta {
-    font-size: 9px;
+    font-size: 12px;
     color: var(--dim);
     margin-left: auto;
   }
 
   .form-models {
     grid-column: 1 / -1;
-    margin-top: 4px;
+    margin-top: 10px;
     display: flex;
     flex-wrap: wrap;
-    gap: 2px;
+    gap: 6px;
   }
   .models-label {
-    font-size: 9px;
+    font-size: 13px;
     color: var(--dim);
     display: block;
-    margin-bottom: 3px;
+    margin-bottom: 8px;
     width: 100%;
   }
   .model-chip {
     background: rgba(28, 33, 40, 0.6);
     border: 1px solid rgba(42, 42, 58, 0.5);
     color: var(--text-secondary);
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 9px;
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 13px;
     font-family: var(--font-mono);
     cursor: pointer;
-    margin: 1px 2px 1px 0;
-    display: inline-block;
+    transition: all 120ms ease;
+    min-height: 34px;
   }
   .model-chip:hover {
     color: var(--text);
     background: var(--bg-elevated);
+    border-color: var(--lavend);
   }
 </style>

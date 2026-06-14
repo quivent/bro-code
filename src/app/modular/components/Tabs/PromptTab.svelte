@@ -66,7 +66,7 @@
   </div>
 </main>
 
-<style lang="postcss">
+<style>
   /* prompt styles (scoped from original) + base editor for consistency */
   .editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .editor-header {

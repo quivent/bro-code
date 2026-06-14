@@ -84,7 +84,7 @@
   </div>
 </main>
 
-<style lang="postcss">
+<style>
   /* Terminal styles (pulled from gemma-code reference) */
   .term-main {
     flex: 1; overflow-y: auto; padding: 16px 20px;

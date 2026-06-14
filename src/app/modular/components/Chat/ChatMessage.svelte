@@ -33,7 +33,7 @@
   {/if}
 </div>
 
-<style lang="postcss">
+<style>
   /* Styles can be moved from main CSS later, scoped here for modularity */
   .message { margin-bottom: 20px; max-width: 780px; animation: fadeIn 200ms ease; }
   .message.user .role { color: var(--blue); font-weight: 600; font-size: 12px; margin-bottom: 6px; letter-spacing: 0.3px; }

@@ -70,7 +70,7 @@
   {/if}
 </main>
 
-<style lang="postcss">
+<style>
   /* tools styles (pulled from gemma-code reference) */
   .tools-list { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
 

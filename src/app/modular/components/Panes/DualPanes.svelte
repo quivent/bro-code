@@ -109,32 +109,33 @@
 </div>
 {/if}
 
-<style lang="postcss">
+<style>
   .split { display: flex; flex: 1; overflow: hidden; }
-  .pane-main { flex: 1; overflow-y: auto; padding: 8px 16px; scroll-behavior: auto; }
+  .pane-main { flex: 1; overflow-y: auto; padding: 10px 18px; scroll-behavior: auto; }
   .pane-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    font-size: 11px;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
   }
   .pane-header select {
-    font-size: 10px;
+    font-size: 12px;
     background: var(--bg-secondary);
     color: var(--text);
     border: 1px solid rgba(42, 42, 58, 0.5);
-    border-radius: 3px;
-    padding: 2px 4px;
+    border-radius: 4px;
+    padding: 4px 8px;
   }
   .pane-label {
     font-weight: 600;
-    font-size: 11px;
+    font-size: 13px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    padding-bottom: 4px;
+    padding-bottom: 5px;
     border-bottom: 1px solid rgba(42, 42, 58, 0.3);
     flex: 1;
+    color: var(--text-secondary);
   }
   .divider {
     width: 1px;
@@ -144,9 +145,9 @@
 
   .dual-inputs {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    padding: 8px 0;
+    padding: 10px 0;
     border-top: 1px solid rgba(42, 42, 58, 0.3);
   }
   .dual-input {
@@ -156,18 +157,19 @@
   }
   .dual-input textarea {
     width: 100%;
-    font-size: 13px;
+    font-size: 14px;
     background: var(--bg-secondary);
     color: var(--text);
     border: 1px solid rgba(42, 42, 58, 0.5);
     border-radius: 6px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     resize: none;
   }
   .dual-label {
-    font-size: 10px;
+    font-size: 12px;
     font-family: var(--font-mono);
-    margin-bottom: 2px;
+    margin-bottom: 4px;
     font-weight: 600;
+    color: var(--text-secondary);
   }
 </style>

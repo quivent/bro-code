@@ -126,3 +126,21 @@ export function createWebInvoke(): InvokeFn {
     return null;
   };
 }
+
+/**
+ * Helper for when you wire the real backend fetch (see WEB_MODE_PICKUP.md and web-backend/server.js).
+ * Usage example in your fetch to /api/invoke:
+ *
+ * const token = localStorage.getItem('bro-web:auth-token');
+ * const res = await fetch(`${webBackendUrl}/api/invoke`, {
+ *   method: 'POST',
+ *   headers: {
+ *     'Content-Type': 'application/json',
+ *     ...(token ? { Authorization: `Bearer ${token}` } : {})
+ *   },
+ *   body: JSON.stringify({ cmd, args })
+ * });
+ *
+ * Store the token after a successful /api/login call (username/password -> {token}).
+ * This fits the existing localStorage + webInvoke pattern used for everything else in web mode.
+ */

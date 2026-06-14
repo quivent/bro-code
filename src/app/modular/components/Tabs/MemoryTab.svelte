@@ -73,7 +73,7 @@
   </div>
 </main>
 
-<style lang="postcss">
+<style>
   /* memory styles (pulled safely from gemma-code reference worktree for visual parity with other editor tabs) */
   .memory-list { flex: 1; overflow-y: auto; padding: 12px 20px; }
 

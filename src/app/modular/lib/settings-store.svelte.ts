@@ -151,6 +151,44 @@ export function getHealthUrl(chatUrl: string): string {
   }
 }
 
+/**
+ * Shared resolver: infers exact model ID by hitting /v1/models if the stored one is missing or not in the server's list.
+ * Used by chat runtime (agent), Test, ctx window probe, auto-on-add, etc. so users can leave the "model" field blank
+ * for single-model servers (e.g. oracle.gemma.training). Caches back to ep + persists.
+ */
+export async function resolveModelForEndpoint(ep: Endpoint): Promise<string> {
+  const current = (ep.model || '').trim();
+  if (current && ep.availableModels && ep.availableModels.length && ep.availableModels.includes(current)) {
+    return current;
+  }
+
+  const modelsUrl = getHealthUrl(ep.url);
+  if (!modelsUrl) return current || '';
+
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(modelsUrl, { method: 'GET', signal: controller.signal });
+    clearTimeout(t);
+    if (res.ok) {
+      const j = await res.json();
+      const ids: string[] = Array.isArray(j?.data) ? j.data.map((d: any) => d?.id || d?.name).filter(Boolean) : [];
+      if (ids.length) {
+        ep.availableModels = ids;
+        if (!current || !ids.includes(current)) {
+          ep.model = ids[0];
+        }
+        // best-effort persist (works for both Tauri invoke and web localStorage path)
+        saveEndpoints().catch(() => {});
+        return ep.model || ids[0];
+      }
+    }
+  } catch {
+    // fall back silently to whatever (possibly empty) was stored
+  }
+  return current || '';
+}
+
 export function getActiveEndpoint(): Endpoint | null {
   // Self-healing: always prune bad dev endpoints before returning active (prevents ongoing 404s on /completions from stale config)
   cleanBadEndpoints();
@@ -190,8 +228,6 @@ export function cleanBadEndpoints() {
 
 // Load all persisted settings into the shared state (called once from App root)
 export async function loadSettings() {
-  if (!isTauri) return;
-
   try {
     const endpointsJson = await invoke('get_setting', { key: 'endpoints' });
     if (endpointsJson) {
@@ -343,7 +379,6 @@ export async function loadSettings() {
 }
 
 export async function saveEndpoints() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'endpoints', value: JSON.stringify(settings.endpoints) });
     await invoke('set_setting', { key: 'activeEndpointId', value: settings.activeEndpointId || '' });
@@ -353,7 +388,6 @@ export async function saveEndpoints() {
 }
 
 export async function saveLocalPort() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'localPort', value: String(settings.localPort) });
   } catch (e) {
@@ -362,7 +396,6 @@ export async function saveLocalPort() {
 }
 
 export async function saveChatSettings() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'chatTemperature', value: settings.chatTemperature.toString() });
     await invoke('set_setting', { key: 'chatMaxTokens', value: settings.chatMaxTokens.toString() });
@@ -381,7 +414,6 @@ export function applyAppearance() {
 }
 
 export async function saveAppearance() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'uiDensity', value: settings.uiDensity });
     await invoke('set_setting', { key: 'chatFontSize', value: settings.chatFontSize });
@@ -393,7 +425,6 @@ export async function saveAppearance() {
 }
 
 export async function saveAgentSettings() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'autoReloadPrompt', value: settings.autoReloadPrompt.toString() });
     await invoke('set_setting', { key: 'maxTranscripts', value: settings.maxTranscripts.toString() });
@@ -406,7 +437,6 @@ export async function saveAgentSettings() {
 }
 
 export async function saveAdvancedSettings() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'requestTimeoutMs', value: settings.requestTimeoutMs.toString() });
     await invoke('set_setting', { key: 'debugMode', value: settings.debugMode.toString() });
@@ -417,7 +447,6 @@ export async function saveAdvancedSettings() {
 }
 
 export async function savePanesSettings() {
-  if (!isTauri) return;
   try {
     await invoke('set_setting', { key: 'chatMode', value: settings.chatMode });
     await invoke('set_setting', { key: 'leftEndpointId', value: settings.leftEndpointId || '' });
@@ -558,17 +587,16 @@ async function saveFormInternal() {
   const trimmedModel = settings.formModel.trim();
   const normalizedUrl = normalizeToChatCompletions(settings.formUrl);
 
-  if (!trimmedName || !normalizedUrl || !trimmedModel) {
-    settings.settingsStatus = 'Name, valid URL and model are required';
-    setTimeout(() => { settings.settingsStatus = ''; }, 2000);
+  if (!trimmedName || !normalizedUrl) {
+    settings.settingsStatus = 'Name and valid URL are required (model can be left blank to auto-infer from server /v1/models)';
+    setTimeout(() => { settings.settingsStatus = ''; }, 3000);
     return;
   }
 
   // If this endpoint (or the one we're editing) has known availableModels from a prior Test,
-  // require the model to be an exact ID the server reported. Prevents "Gemma" friendly names
-  // that produce "The model `Gemma` does not exist." on chat completions.
-  const targetEp = settings.editingId ? endpoints.find(e => e.id === settings.editingId) : null;
-  if (targetEp?.availableModels?.length && !targetEp.availableModels.includes(trimmedModel)) {
+  // require the model (if provided) to be an exact ID the server reported.
+  const targetEp = settings.editingId ? settings.endpoints.find(e => e.id === settings.editingId) : null;
+  if (trimmedModel && targetEp?.availableModels?.length && !targetEp.availableModels.includes(trimmedModel)) {
     settings.settingsStatus = `Model must be an exact ID from the server (use one of the chips or re-Test the endpoint): ${targetEp.availableModels.slice(0, 3).join(', ')}`;
     setTimeout(() => { settings.settingsStatus = ''; }, 4000);
     return;
@@ -591,6 +619,8 @@ async function saveFormInternal() {
         url: normalizedUrl,
         model: trimmedModel
       };
+      // Reassign to trigger full reactivity in Svelte 5 $state (especially important in web mode)
+      settings.endpoints = [...settings.endpoints];
     }
   } else {
     const newEp: Endpoint = {
@@ -600,6 +630,16 @@ async function saveFormInternal() {
       model: trimmedModel
     };
     settings.endpoints = [...settings.endpoints, newEp];
+
+    // Auto-Test newly added endpoints so that availableModels + model ID get inferred
+    // from the server's /v1/models immediately (no manual Test click needed for simple cases).
+    // Small delay to let the list render + reactivity settle.
+    setTimeout(() => {
+      const added = settings.endpoints.find(e => e.id === newEp.id);
+      if (added) {
+        testEndpoint(added).catch(() => {});
+      }
+    }, 120);
   }
 
   await saveEndpoints();
@@ -680,12 +720,9 @@ export async function testEndpoint(ep: Endpoint) {
     };
   }
 
-  // If we got a usable models list from the probe, correct the model ID on this ep *before*
-  // running the completions TPS test. This way the test POST uses a server-known model ID
-  // instead of a friendly label like "Gemma" that would 404 the completions ping.
-  if (ep.availableModels && ep.availableModels.length && !ep.availableModels.includes(ep.model)) {
-    ep.model = ep.availableModels[0];
-  }
+  // Use the shared resolver (which may do another /models fetch or use the just-populated list)
+  // to guarantee a server-valid model ID before the TPS completions ping.
+  await resolveModelForEndpoint(ep);
 
   const tps = await libMeasureTps(ep);
 

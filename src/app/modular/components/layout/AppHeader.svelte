@@ -48,7 +48,7 @@
   </span>
 </header>
 
-<style lang="postcss">
+<style>
   /* Copy relevant styles from main, or use global */
   header {
     display: flex; align-items: center; gap: 16px;

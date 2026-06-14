@@ -320,7 +320,7 @@
   {/if}
 </footer>
 
-<style lang="postcss">
+<style>
   /* Consolidated chat UI styles for solo/dual/vs/supervision (sourced from extracted ChatMessage/ExecCard + original chat affordances). */
   .chat-mode-bar { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid rgba(42,42,58,0.4); }
   .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; }
@@ -383,12 +383,14 @@
 
   /* supervision (inline in composer for this mode) */
   .supervision-main { display: flex; flex-direction: column; flex: 1; }
-  .supervision-controls { padding: 6px 12px; font-size: 11px; border-bottom: 1px solid rgba(42,42,58,0.25); display: flex; align-items: center; gap: 12px; }
+  .supervision-controls { padding: 8px 14px; font-size: 13px; border-bottom: 1px solid rgba(42,42,58,0.25); display: flex; align-items: center; gap: 14px; }
   .supervision-split { display: flex; flex: 1; overflow: hidden; }
   .primary-chat, .supervisor-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  .pane-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--dim); padding: 4px 8px; border-bottom: 1px solid rgba(42,42,58,0.2); }
-  .supervisor-log { flex: 1; padding: 8px; font-family: var(--font-mono); font-size: 12px; overflow: auto; white-space: pre-wrap; color: var(--text-secondary); background: rgba(0,0,0,0.15); }
-  .supervisor-log .hint { opacity: 0.6; font-style: italic; }
+  .pane-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); padding: 6px 10px; border-bottom: 1px solid rgba(42,42,58,0.2); font-weight: 600; background: rgba(42,42,58,0.15); }
+  .supervisor-log { flex: 1; padding: 10px 12px; font-family: var(--font-mono); font-size: 13px; line-height: 1.5; overflow: auto; white-space: pre-wrap; color: var(--text); background: rgba(0,0,0,0.2); border: 1px solid rgba(42,42,58,0.3); border-radius: 4px; }
+  .supervisor-log .hint { opacity: 0.7; font-style: italic; color: var(--dim); }
+  .stop-btn { background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.3); color: var(--red); padding: 4px 12px; border-radius: 4px; font-size: 12px; font-family: var(--font-mono); cursor: pointer; min-height: 30px; }
+  .stop-btn:hover { background: rgba(248,113,113,0.25); }
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 </style>

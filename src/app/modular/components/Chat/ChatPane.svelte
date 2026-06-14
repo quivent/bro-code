@@ -63,7 +63,7 @@
 </main>
 
 <!-- Input would be separate, but for pane in dual, the input is in mode bar or per pane -->
-<style lang="postcss">
+<style>
   /* pane styles, splash, message etc from main */
   .pane-main { flex: 1; overflow-y: auto; padding: 8px 16px; scroll-behavior: auto; }
   /* copy other relevant from .pane-main, .message etc */

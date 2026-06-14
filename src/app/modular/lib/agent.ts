@@ -1,6 +1,6 @@
 import type { InvokeFn, Message, ChatPane, CtxEntry, Endpoint } from './types';
 import { buildApiMessages, loadContext, pruneHistoryForContext } from './context';
-import { settings as appSettings } from './settings-store.svelte.ts';  // for runtime maxHistoryTurns control over what gets sent to model
+import { settings as appSettings, resolveModelForEndpoint } from './settings-store.svelte.ts';  // for runtime maxHistoryTurns + shared model inference from /v1/models
 import { loadMemory, persistMemory, getMemorySection, type MemoryManagerOptions } from './memory';
 import { loadPrompt } from './prompt';
 import { extractExecCalls, EXEC_AWARENESS, runExec, requestExecApproval, isDestructiveCmd, type ExecApprovalResult } from './scp';
@@ -59,6 +59,8 @@ function getModelsUrl(chatUrl: string): string {
     return '';
   }
 }
+
+// resolveModelForEndpoint is now shared from settings-store (single source of truth for /v1/models inference)
 
 // Reusable agent core for solo + dual/VS. Provides memory + prompt + full context access.
 export interface AgentCore {
@@ -212,14 +214,17 @@ export async function createAgentCore(opts: {
         lastErr = 'skipped invalid endpoint URL (prevents 404 on completions against dev server or bad host)';
         continue;
       }
-      console.warn(`[inference] chat completions POST → ${chatUrl} (model: ${ep.model})`);
+      const modelToUse = await resolveModelForEndpoint(ep);
+      // ensure any UI (endpoints list in Settings, currentModel derived, etc) sees the freshly inferred ID
+      appSettings.endpoints = [...appSettings.endpoints];
+      console.warn(`[inference] chat completions POST → ${chatUrl} (model: ${modelToUse})`);
       try {
         abortController = new AbortController();
         const res = await fetch(chatUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: ep.model,
+            model: modelToUse,
             messages: apiMessages,
             max_tokens: maxTokens,
             temperature,
@@ -232,7 +237,7 @@ export async function createAgentCore(opts: {
           try { const t = await res.text(); detail = JSON.parse(t)?.error?.message || t.slice(0, 200); } catch {}
           let modelsInfo = '';
           if (res.status === 404) {
-            modelsInfo = ` (remote returned 404 for model '${ep.model}'. This usually means the model ID is wrong or the server doesn't serve OpenAI chat completions at this exact URL. Click 'Test' in Settings to discover the actual model IDs via /v1/models, or manually open http://192.222.59.234:8000/v1/models in your browser and copy an exact 'id' value into the model field.)`;
+            modelsInfo = ` (remote returned 404 for model '${ep.model || '(none)'}'. We now auto-query /v1/models and use the first reported ID if the stored model field is blank or invalid — try clicking Test in Settings, or ensure the URL points at a real completions endpoint.)`;
           }
           // Always probe /v1/models on any chat failure so we can tell the user the exact model IDs the remote server actually supports.
           // This is especially useful for 404s caused by wrong "model" value (very common when people use friendly names like "Gemma").

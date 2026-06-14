@@ -7,7 +7,7 @@
   <pre class="exec-out">{exec.output || (exec.approved ? '' : 'denied')}</pre>
 </div>
 
-<style lang="postcss">
+<style>
   .exec-card { margin: 8px 0; padding: 8px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px; }
   .exec-card.ran { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); }
   .exec-card.denied { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); }

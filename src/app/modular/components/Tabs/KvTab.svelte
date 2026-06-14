@@ -256,7 +256,7 @@
   </div>
 </main>
 
-<style lang="postcss">
+<style>
   /* KV styles (pulled from gemma-code reference for full parity with editor tabs) */
   .kv-body { padding: 16px 20px; overflow-y: auto; }
 

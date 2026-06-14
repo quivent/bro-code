@@ -46,7 +46,7 @@
   </section>
 </main>
 
-<style lang="postcss">
+<style>
   /* source styles (ported/fixed referencing gemma-code worktree monolithic implementation for the correct layout, colors, hover/active states, and syntax highlight overlay).
      Placed inside this component for proper Svelte scoping (bro-code uses modular <SourceTab> unlike some inlined tabs).
      Shared bits like .editor-header, .save-btn etc. are also in ContextTab/App. */

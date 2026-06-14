@@ -10,6 +10,6 @@
   {/each}
 </nav>
 
-<style lang="postcss">
+<style>
   /* From original nav styles */
 </style>

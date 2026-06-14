@@ -53,7 +53,9 @@
     checkActiveHealth,
     cleanBadEndpoints,
     saveAppearance,
+    saveAgentSettings,
     savePanesSettings,
+    saveAdvancedSettings,
     // Handlers for full SettingsTab functionality (endpoints CRUD, test, local, etc.)
     refreshAllHealth,
     onAddEndpointClick,
@@ -73,6 +75,7 @@
     saveLocalPortAndSync,
     // Pure URL helpers (reused for probe so /models never gets dup /v1 from crude replace)
     getHealthUrl,
+    resolveModelForEndpoint,
   } from './modular/lib/settings-store.svelte.ts';
   import SettingsTab from './modular/components/Tabs/SettingsTab.svelte';
   import MemoryTab from './modular/components/Tabs/MemoryTab.svelte';
@@ -136,6 +139,9 @@
   let unifiedAgent: any = $state(null);
   const agentCtx = setAgentContext();
 
+  // Settings sub-section (enables the other four tabs next to Endpoints in Settings)
+  let settingsSection = $state<'endpoints' | 'appearance' | 'agent' | 'panes' | 'advanced'>('endpoints');
+
   const PROMPT_FILE = `${config.homeDir}/prompt.md`;
   const MEMORY_HOME = `${config.homeDir}/memory`;
   const MEMORY_FILE = `${MEMORY_HOME}/memory.json`;
@@ -163,7 +169,6 @@
   }
 
   async function loadSettings() {
-    if (!isTauri) return;
     try {
       await loadAppSettings();
 
@@ -192,6 +197,15 @@
   // ── State ──
   type Tab = 'chat' | 'prompt' | 'memory' | 'tools' | 'transcripts' | 'terminal' | 'context' | 'kv' | 'source' | 'settings';
   let activeTab: Tab = $state('chat');
+
+  // Mobile detection for simplified tab UI
+  let isMobile = $state(false);
+  $effect(() => {
+    const checkMobile = () => { isMobile = window.innerWidth < 768; };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  });
 
   // Persist active tab across refreshes (Cmd+R / location.reload)
   if (typeof localStorage !== 'undefined') {
@@ -285,6 +299,17 @@
       if (typeof win === 'number' && win > 0 && win < 2000000) {
         ctxWindow = win;
       }
+
+      // Also force model name inference (re-uses the shared resolver for consistency with chat path + auto-on-add).
+      // This ensures ctxWindow probe (which fires on active endpoint change) also populates the model ID.
+      if (ep) {
+        void resolveModelForEndpoint(ep).then((resolved) => {
+          if (resolved) {
+            // ensure the endpoints array mutation is seen for reactivity (list + derived currentModel)
+            appSettings.endpoints = [...appSettings.endpoints];
+          }
+        });
+      }
     } catch (e) {
       // silent; user can use explicit Test in Settings which also hits /models
     }
@@ -305,7 +330,6 @@
   // Delegates to modular/lib/context.ts (loadContext builds system prompt from prompt + memory + files/dirs)
   // and refreshes the unified agent so chat gets the injected context.
   async function loadContext() {
-    if (!isTauri) return;
     try {
       const res = await libLoadContext({
         invoke,
@@ -394,7 +418,6 @@
   }
 
   async function saveCtxSettings() {
-    if (!isTauri) return;
     await invoke('set_setting', { key: 'ctxEntries', value: JSON.stringify(ctxEntries) }).catch(() => {});
   }
 
@@ -1090,18 +1113,37 @@
       </span>
     {/if}
     <nav>
-      <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
-      <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
-      <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
-      <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
-      <button class:active={activeTab === 'transcripts'} onclick={() => activeTab = 'transcripts'}>Transcripts</button>
-      <button class:active={activeTab === 'terminal'} onclick={() => activeTab = 'terminal'}>Terminal</button>
-      <button class:active={activeTab === 'context'} onclick={() => activeTab = 'context'}>Context</button>
-      <button class:active={activeTab === 'kv'} onclick={() => activeTab = 'kv'}>KV</button>
-      <button class:active={activeTab === 'source'} onclick={() => activeTab = 'source'}>Source</button>
-      <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
-      {#if activeTab === 'chat'}
-        <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
+      {#if !isMobile}
+        <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
+        <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
+        <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
+        <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
+        <button class:active={activeTab === 'transcripts'} onclick={() => activeTab = 'transcripts'}>Transcripts</button>
+        <button class:active={activeTab === 'terminal'} onclick={() => activeTab = 'terminal'}>Terminal</button>
+        <button class:active={activeTab === 'context'} onclick={() => activeTab = 'context'}>Context</button>
+        <button class:active={activeTab === 'kv'} onclick={() => activeTab = 'kv'}>KV</button>
+        <button class:active={activeTab === 'source'} onclick={() => activeTab = 'source'}>Source</button>
+        <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
+        {#if activeTab === 'chat'}
+          <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
+        {/if}
+      {:else}
+        <!-- Mobile simplified main tabs: only Chat (which covers Prompt/Memory/Tools underneath) and Settings -->
+        <button 
+          class:active={['chat','prompt','memory','tools'].includes(activeTab)} 
+          onclick={() => activeTab = 'chat'}>
+          Chat
+        </button>
+        {#if activeTab !== 'settings'}
+          <button 
+            class:active={activeTab === 'settings'} 
+            onclick={() => activeTab = 'settings'}>
+            Settings
+          </button>
+        {/if}
+        {#if activeTab === 'chat'}
+          <button onclick={() => chatTermSplit = !chatTermSplit}>{chatTermSplit ? 'Chat only' : 'Chat+term'}</button>
+        {/if}
       {/if}
     </nav>
     <span class="meta">
@@ -1112,6 +1154,16 @@
       {/if}
     </span>
   </header>
+
+  <!-- Mobile chat sub-tabs: Prompt, Memory, Tools underneath Chat for mobile -->
+  {#if isMobile && ['chat','prompt','memory','tools'].includes(activeTab)}
+    <div class="mobile-chat-subnav">
+      <button class:active={activeTab === 'chat'} onclick={() => activeTab = 'chat'}>Chat</button>
+      <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
+      <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
+      <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
+    </div>
+  {/if}
 
   <!-- Chat Tab -->
   {#if activeTab === 'chat'}
@@ -1128,17 +1180,6 @@
     <!-- Left: chat -->
     <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
       <main class="chat-main" bind:this={chatContainer} style="flex: 1;">
-        {#if shownCtx.length}
-          <div class="shown-ctx">
-            <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
-            {#each shownCtx as c}
-              <div class="shown-ctx-item" title={c.path}>
-                <span class="kind {c.kind}">{c.kind}</span>
-                <span class="p">{c.path}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
         {#if messages.length === 0 && !streaming}
           <div class="splash">
             <pre class="logo">{config.logo.join('\n')}</pre>
@@ -1189,9 +1230,6 @@
           </div>
         {/if}
         {#if error}<div class="error">✗ {error}</div>{/if}
-        {#if !streaming && messages.length > 0}
-          <div class="stats">{elapsed.toFixed(1)}s · {tokenCount} tok · {(tokenCount / Math.max(elapsed, 0.1)).toFixed(0)} tok/s</div>
-        {/if}
       </main>
     </div>
     <div class="divider"></div>
@@ -1232,108 +1270,123 @@
     />
   </div>
   {:else}
-  <main class="chat-main" bind:this={chatContainer}>
-    {#if shownCtx.length}
-      <div class="shown-ctx">
-        <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
-        {#each shownCtx as c}
-          <div class="shown-ctx-item" title={c.path}>
-            <span class="kind {c.kind}">{c.kind}</span>
-            <span class="p">{c.path}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-    {#if appSettings.chatMode !== 'solo'}
-      <div class="mode-indicator" title="Multi modes (dual/vs/supervision) activate alternative layouts where wired. Send and custom ctx feeding currently use the solo agent path.">
-        mode: <strong>{appSettings.chatMode}</strong>
-        {#if appSettings.chatMode === 'dual'}(shared dual panes){:else if appSettings.chatMode === 'vs' || appSettings.chatMode === 'supervision'}(see composer or gemma variant for full panes/crosstalk){/if}
-      </div>
-    {/if}
-    {#if messages.length === 0 && !streaming}
-      <div class="splash">
-        <pre class="logo">{config.logo.join('\n')}</pre>
-        <p class="tagline">{config.tagline}</p>
-      </div>
-    {/if}
-    {#each messages as msg}
-      {#if msg.exec}
-        <div class="exec-card {msg.exec.approved ? 'ran' : 'denied'}">
-          <div class="exec-cmd"><span class="exec-ps">$</span> {msg.exec.cmd}</div>
-          <pre class="exec-out">{msg.exec.output || (msg.exec.approved ? '' : 'denied')}</pre>
+  <!-- Wrapper to make messages grow and push footer (with prompt at bottom of chat area) down -->
+  <div class="chat-content" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
+    <main class="chat-main" bind:this={chatContainer} style="flex: 1; overflow-y: auto;">
+      {#if appSettings.chatMode !== 'solo'}
+        <div class="mode-indicator" title="Multi modes (dual/vs/supervision) activate alternative layouts where wired. Send and custom ctx feeding currently use the solo agent path.">
+          mode: <strong>{appSettings.chatMode}</strong>
+          {#if appSettings.chatMode === 'dual'}(shared dual panes){:else if appSettings.chatMode === 'vs' || appSettings.chatMode === 'supervision'}(see composer or gemma variant for full panes/crosstalk){/if}
         </div>
-      {:else}
-      <div class="message {msg.role}">
-        <div class="role">{msg.role === 'user' ? '▸ you' : config.assistantLabel}</div>
-        {#if msg.role === 'assistant'}
-          <div class="content markdown">{@html renderMd(msg.content)}</div>
-        {:else}
-          <div class="content user-content">{msg.content}</div>
-        {/if}
-      </div>
       {/if}
-    {/each}
-    {#if streaming && currentResponse}
-      <div class="message assistant">
-        <div class="role">{config.assistantLabel}</div>
-        <div class="content markdown">{@html renderMd(currentResponse)}</div>
-      </div>
-    {/if}
-    {#if pendingExec}
-      <div class="exec-approve">
-        <div class="exec-approve-head">⟶ {config.name} wants to run a command</div>
-        <pre class="exec-out">{pendingExec.cmd}</pre>
-        {#if showFeedbackInput}
-          <textarea bind:value={feedbackInput} placeholder="Tell the agent why (e.g. 'Do not run ls ~ as it hangs forever. Use ls -la /specific/path instead or a different tool.')." rows="2" style="width:100%; margin:6px 0; font-size:12px; font-family:var(--font-mono);"></textarea>
-          <div class="exec-approve-btns">
-            <button class="exec-yes" onclick={submitFeedbackDeny}>Send feedback &amp; deny</button>
-            <button class="exec-no" onclick={cancelFeedback}>Cancel</button>
+      {#if messages.length === 0 && !streaming}
+        <div class="splash">
+          <pre class="logo">{config.logo.join('\n')}</pre>
+          <p class="tagline">{config.tagline}</p>
+        </div>
+      {/if}
+      {#each messages as msg}
+        {#if msg.exec}
+          <div class="exec-card {msg.exec.approved ? 'ran' : 'denied'}">
+            <div class="exec-cmd"><span class="exec-ps">$</span> {msg.exec.cmd}</div>
+            <pre class="exec-out">{msg.exec.output || (msg.exec.approved ? '' : 'denied')}</pre>
           </div>
         {:else}
-          <div class="exec-approve-btns">
-            <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
-            <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
-            <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
-            <button onclick={startFeedback} style="background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.3);color:#fbbf24;">Say something back</button>
-          </div>
+        <div class="message {msg.role}">
+          <div class="role">{msg.role === 'user' ? '▸ you' : config.assistantLabel}</div>
+          {#if msg.role === 'assistant'}
+            <div class="content markdown">{@html renderMd(msg.content)}</div>
+          {:else}
+            <div class="content user-content">{msg.content}</div>
+          {/if}
+        </div>
         {/if}
-      </div>
-    {/if}
-    {#if error}<div class="error">✗ {error}</div>{/if}
-    {#if !streaming && messages.length > 0}
-      <div class="stats">{elapsed.toFixed(1)}s · {tokenCount} tok · {(tokenCount / Math.max(elapsed, 0.1)).toFixed(0)} tok/s</div>
-    {/if}
-  </main>
+      {/each}
+      {#if streaming && currentResponse}
+        <div class="message assistant">
+          <div class="role">{config.assistantLabel}</div>
+          <div class="content markdown">{@html renderMd(currentResponse)}</div>
+        </div>
+      {/if}
+      {#if pendingExec}
+        <div class="exec-approve">
+          <div class="exec-approve-head">⟶ {config.name} wants to run a command</div>
+          <pre class="exec-out">{pendingExec.cmd}</pre>
+          {#if showFeedbackInput}
+            <textarea bind:value={feedbackInput} placeholder="Tell the agent why (e.g. 'Do not run ls ~ as it hangs forever. Use ls -la /specific/path instead or a different tool.')." rows="2" style="width:100%; margin:6px 0; font-size:12px; font-family:var(--font-mono);"></textarea>
+            <div class="exec-approve-btns">
+              <button class="exec-yes" onclick={submitFeedbackDeny}>Send feedback &amp; deny</button>
+              <button class="exec-no" onclick={cancelFeedback}>Cancel</button>
+            </div>
+          {:else}
+            <div class="exec-approve-btns">
+              <button class="exec-yes" onclick={() => answerExec(true)}>Run</button>
+              <button class="exec-always" onclick={() => answerExec(true, true)}>Always this session</button>
+              <button class="exec-no" onclick={() => answerExec(false)}>Deny</button>
+              <button onclick={startFeedback} style="background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.3);color:#fbbf24;">Say something back</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if error}<div class="error">✗ {error}</div>{/if}
+    </main>
+  </div>
   {/if}
   <footer>
-    <!-- Context bar placed in the footer (lowered towards the bottom, above the input).
-         This is the position matching the gemma-code composer structure, which puts it right in the input area at the very bottom of the UI.
-         Added a small margin-bottom so it's not jammed flush against the textarea (a bit of breathing room / "higher" from the absolute input edge). -->
-    <div class="ctx-bar" style="margin-bottom: 6px;" title="Context usage for the next request (after client-side sliding per maxHistoryTurns + maxToolHistory). Estimated at ~4 chars per token. Tool usage results are preferentially retained. Window probed from the active inference server's /v1/models (max_model_len). Use Test in Settings to help populate the window size. Control in Settings &gt; Agent.">
-      <span class="ctx-label">ctx</span>
-      <div class="ctx-track">
-        <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow ? Math.max(ctxPct, 1.5) : 0}%"></div>
-      </div>
-      <div class="ctx-text">
-        {#if ctxWindow}
-          {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · {(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left
-        {:else}
-          ~{(ctxUsedTokens / 1000).toFixed(1)}k used · window unknown
-        {/if}
-      </div>
-    </div>
-
-    <!-- Buttons at the bottom to feed / manage context shown in chat (marked via Context tab).
-         "Feed" reloads the marked entries (so latest disk content is used) and ensures they are visible. -->
-    <div class="feed-ctx-row">
-      <button class="feed-btn" onclick={feedMarkedContext} disabled={!shownCtx.length}>Feed marked context</button>
-      <button class="feed-btn" onclick={refreshContext}>Refresh context</button>
-      <button class="feed-btn" onclick={clearShown} disabled={!shownCtx.length}>Clear shown</button>
-    </div>
-
+    <!-- Prompt box bound to the bottom of the chat area.
+         Only metrics and suggestive prompts go below the prompt box.
+         Context (shown list) also moved below, made wider/fuller. -->
     <div class="input-row">
       <textarea bind:this={inputEl} bind:value={inputText} onkeydown={chatKeydown}
         placeholder={`talk to ${config.name}...`} rows="2" disabled={streaming}></textarea>
+    </div>
+
+    <!-- Metrics (ctx usage + stats) and suggestive prompts (feed actions) below the prompt. -->
+    <div class="post-prompt-bar">
+      <!-- Metrics row: ctx usage + stats side by side on large screens -->
+      <div class="bottom-metrics">
+        <!-- ctx usage metrics -->
+        <div class="ctx-bar" title="Context usage for the next request (after client-side sliding per maxHistoryTurns + maxToolHistory). Estimated at ~4 chars per token. Tool usage results are preferentially retained. Window probed from the active inference server's /v1/models (max_model_len). Use Test in Settings to help populate the window size. Control in Settings &gt; Agent.">
+          <span class="ctx-label">ctx</span>
+          <div class="ctx-track">
+            <div class="ctx-fill" class:warn={ctxPct > 75} class:crit={ctxPct > 90} style:width="{ctxWindow ? Math.max(ctxPct, 1.5) : 0}%"></div>
+          </div>
+          <div class="ctx-text">
+            {#if ctxWindow}
+              {(ctxUsedTokens / 1000).toFixed(1)}k / {(ctxWindow / 1000).toFixed(0)}k · {(Math.max(0, ctxWindow - ctxUsedTokens) / 1000).toFixed(1)}k left
+            {:else}
+              ~{(ctxUsedTokens / 1000).toFixed(1)}k used · window unknown
+            {/if}
+          </div>
+        </div>
+
+        <!-- stats metrics -->
+        {#if !streaming && messages.length > 0}
+          <div class="stats">{elapsed.toFixed(1)}s · {tokenCount} tok · {(tokenCount / Math.max(elapsed, 0.1)).toFixed(0)} tok/s</div>
+        {/if}
+      </div>
+
+      <!-- suggestive prompts / feed actions -->
+      <div class="bottom-actions">
+        <div class="feed-ctx-row">
+          <button class="feed-btn" onclick={feedMarkedContext} disabled={!shownCtx.length}>Feed marked context</button>
+          <button class="feed-btn" onclick={refreshContext}>Refresh context</button>
+          <button class="feed-btn" onclick={clearShown} disabled={!shownCtx.length}>Clear shown</button>
+        </div>
+      </div>
+
+      <!-- Context shown list: now below the prompt box, wider/full width -->
+      {#if shownCtx.length}
+        <div class="shown-ctx context-below">
+          <div class="shown-ctx-head">📎 Shown context (marked in Context tab • fed to Gemma)</div>
+          {#each shownCtx as c}
+            <div class="shown-ctx-item" title={c.path}>
+              <span class="kind {c.kind}">{c.kind}</span>
+              <span class="p">{c.path}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </footer>
 
@@ -1511,8 +1564,13 @@
     formModel={appSettings.formModel}
     testState={appSettings.testState}
     draggedIdx={appSettings.draggedIdx}
-    settingsSection={'endpoints'}
-    onSection={() => {}}
+    settingsSection={settingsSection}
+    onSection={(s) => settingsSection = s}
+    onSaveAppearance={saveAppearance}
+    onSaveAgent={saveAgentSettings}
+    onSavePanes={savePanesSettings}
+    onSaveAdvanced={saveAdvancedSettings}
+    onClearData={clearSettingsState}
     onRefreshAllHealth={refreshAllHealth}
     onSaveLocalPort={saveLocalPortAndSync}
     onSyncLocalPorts={syncLocalEndpointPorts}
@@ -1587,6 +1645,13 @@
     flex: 1; overflow-y: auto; padding: 24px 32px;
     scroll-behavior: smooth;
   }
+  .chat-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
   .splash {
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; height: 55vh; opacity: 0.5;
@@ -1599,6 +1664,13 @@
   .tagline { margin-top: 16px; color: var(--lavend); font-size: 13px; letter-spacing: 0.5px; opacity: 0.7; }
 
   .message { margin-bottom: 20px; max-width: 780px; animation: fadeIn 200ms ease; }
+  /* Relax message width in multi-mode split panes (dual/vs/supervision) so text is easier to read on large desktop */
+  .split .message,
+  :global(.dual-panes) .message,
+  :global(.vs-crosstalk) .vs-msg,
+  :global(.supervision-pane) .message {
+    max-width: 100% !important;
+  }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   .message.user .role { color: var(--blue); font-weight: 600; font-size: 12px; margin-bottom: 6px; letter-spacing: 0.3px; }
   .message.assistant .role { color: var(--hotpink); font-weight: 600; font-size: 12px; margin-bottom: 6px; letter-spacing: 0.3px; }
@@ -1654,6 +1726,7 @@
 
   /* Context usage bar (imported from gemma-code ChatComposer) */
   .ctx-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; font-size: 11px; color: var(--muted); font-family: var(--font-mono); border-top: 1px solid rgba(42,42,58,0.25); }
+  .post-prompt-bar .ctx-bar { border-top: none; padding-top: 0; }
   .ctx-label { font-weight: 600; letter-spacing: 0.5px; }
   .ctx-track { flex: 1; height: 4px; background: rgba(42,42,58,0.4); border-radius: 2px; overflow: hidden; }
   .ctx-fill { height: 100%; background: var(--lavend); transition: width 200ms ease; }
@@ -1689,11 +1762,14 @@
     white-space: nowrap;
     max-width: 70%;
   }
+  .context-below .shown-ctx-item .p {
+    max-width: 85%; /* wider in the bottom bar on large screens */
+  }
 
   .feed-ctx-row {
     display: flex;
     gap: 6px;
-    padding: 0 12px 4px;
+    padding: 0;
     flex-wrap: wrap;
   }
   .feed-btn {
@@ -1708,14 +1784,98 @@
   }
   .feed-btn:disabled { opacity: 0.5; cursor: default; }
 
-  .mode-indicator {
-    font-size: 10px;
+  /* Post-prompt bar below the input: metrics + suggestive + wider context */
+  .post-prompt-bar {
+    padding: 4px 0 8px; /* full width on large desktop */
+    border-top: 1px solid rgba(42,42,58,0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    width: 100%;
+  }
+  .post-prompt-bar .ctx-bar,
+  .post-prompt-bar .stats,
+  .post-prompt-bar .feed-ctx-row,
+  .post-prompt-bar .context-below {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+
+  /* Make ctx taller and more prominent */
+  .ctx-bar {
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .ctx-track {
+    height: 8px;
+  }
+  .ctx-text {
+    font-size: 12px;
+  }
+
+  /* Bottom sections: group metrics, actions, context for better readability on large screens */
+  .bottom-metrics {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .bottom-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .bottom-metrics .stats {
+    font-size: 12px;
     color: var(--dim);
     font-family: var(--font-mono);
-    margin: 2px 0 8px;
-    padding: 1px 6px;
-    background: rgba(42,42,58,0.25);
-    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  .context-below {
+    background: rgba(167, 139, 250, 0.04);
+    border: 1px solid rgba(167, 139, 250, 0.15);
+    border-radius: 4px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .context-below .shown-ctx-head {
+    font-size: 11px;
+    margin-bottom: 2px;
+  }
+  .context-below .shown-ctx-item {
+    font-size: 12px;
+    padding: 1px 0;
+  }
+  .context-below .shown-ctx-item .p {
+    max-width: 80%;
+  }
+
+  /* Make feed buttons more readable */
+  .feed-ctx-row .feed-btn {
+    font-size: 11px;
+    padding: 3px 10px;
+    min-height: 26px;
+  }
+  .context-below {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 4px 8px;
+    background: rgba(167,139,250,0.04);
+    border: 1px solid rgba(167,139,250,0.15);
+    border-radius: 4px;
+  }
+
+  .mode-indicator {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    margin: 4px 0 10px;
+    padding: 3px 8px;
+    background: rgba(42,42,58,0.4);
+    border: 1px solid rgba(42,42,58,0.6);
+    border-radius: 4px;
     display: inline-block;
   }
   .mode-indicator strong { color: var(--lavend); font-weight: 600; }
@@ -1723,9 +1883,9 @@
   /* chat-mode-bar: modes listed directly underneath chat (Solo/Dual/VS/Supervision).
      Matches gemma-code's .chat-mode-bar in ChatComposer for consistent "under chat" UX. */
   .chat-mode-bar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid rgba(42,42,58,0.4); }
-  .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--font-mono); cursor: pointer; }
-  .chat-mode-bar button.active { background: var(--bg-elevated); color: var(--text); border-color: rgba(167,139,250,0.4); }
-  .chat-mode-bar button:hover { color: var(--text); }
+  .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 5px 12px; border-radius: 4px; font-size: 13px; font-family: var(--font-mono); cursor: pointer; min-height: 30px; }
+  .chat-mode-bar button.active { background: var(--bg-elevated); color: var(--text); border-color: rgba(167,139,250,0.4); font-weight: 600; }
+  .chat-mode-bar button:hover { color: var(--text); background: rgba(42,42,58,0.5); }
 
   /* Editor tabs (Context / Prompt / Memory / Source / Kv / etc.)
      Ported from gemma-code reference (~/.worktrees/unified-pkg/src/app/App.svelte).
@@ -1847,16 +2007,20 @@
     border-top: 1px solid rgba(42,42,58,0.3);
   }
 
-  /* Settings specific styles are provided exclusively by the SettingsTab component's own <style lang="postcss"> (self-contained).
+  /* Settings specific styles are provided exclusively by the SettingsTab component's own <style> (self-contained).
      All global duplicates have been excised. This fixes the CSS parse error and the Svelte unused-selector warnings.
      Editor tab styles (.editor-main, .editor-header, .ctx-*, shared buttons etc.) are defined just above (ported from gemma-code reference to fix the broken context page and peer tabs). */
 
   /* ── Footer / Input ── */
   footer {
-    padding: 10px 20px 14px;
+    padding: 0; /* let inner elements control padding for full width on large desktop */
     background: linear-gradient(180deg, var(--bg-primary) 0%, #0a0c12 100%);
     border-top: 1px solid rgba(42, 42, 58, 0.4);
     flex-shrink: 0;
+  }
+  .input-row {
+    padding: 8px 32px; /* match chat-main side padding for aligned width on large desktop */
+    border-top: 1px solid rgba(42,42,58,0.3);
   }
   textarea, .term-input {
     width: 100%; background: var(--bg-secondary); color: var(--text);
@@ -2388,4 +2552,386 @@
   :global(.hljs-function), :global(.hljs-title) { color: #61afef; }
   :global(.hljs-built_in), :global(.hljs-type) { color: #e5c07b; }
   :global(.hljs-attr) { color: #d19a66; } :global(.hljs-variable) { color: #e06c75; }
+
+  /* ============================================
+     MOBILE RESPONSIVE STYLES (entire UI)
+     Targets phones + small tablets. Desktop unchanged.
+     Covers host App + all :global() modular tab styles.
+  ============================================ */
+  @media (max-width: 768px) {
+    .app {
+      height: 100dvh; /* dynamic viewport for mobile browsers */
+    }
+    /* Boost base readability on mobile - prevents "everything small" feel */
+    body, .app {
+      font-size: 15px;
+    }
+
+    /* Header: tighter, scrollable nav for the many tabs */
+    header {
+      height: 48px;
+      padding: 0 10px;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .title {
+      font-size: 15px;
+    }
+    .web-mode-banner {
+      font-size: 11px;
+      padding: 1px 5px;
+      margin-left: 3px;
+    }
+    nav {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      flex-wrap: nowrap;
+      scrollbar-width: none;
+      width: 100%;
+    }
+    nav::-webkit-scrollbar { display: none; }
+    nav button {
+      flex-shrink: 0;
+      font-size: 11px;
+      padding: 5px 8px;
+      min-height: 32px;
+    }
+    .meta {
+      display: none;
+    }
+
+    /* Main chat / editor content */
+    .chat-main {
+      padding: 16px 18px;
+    }
+    .message {
+      max-width: 100%;
+    }
+    .user-content {
+      font-size: 15px;
+      padding: 10px 12px;
+    }
+    .message.assistant .content {
+      font-size: 15px;
+    }
+    .splash {
+      height: 45vh;
+    }
+    .logo {
+      font-size: 12px;
+    }
+    .tagline {
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    /* Mode bar under chat */
+    .chat-mode-bar {
+      padding: 8px 10px;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .chat-mode-bar button {
+      font-size: 11px;
+      padding: 3px 8px;
+      min-height: 32px;
+    }
+
+    /* Split layouts (chat+term, dual etc) -> stack on mobile */
+    .split {
+      flex-direction: column !important;
+    }
+    .chat-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* Footer / composer input - touch friendly */
+    footer {
+      padding: 10px 12px 12px;
+    }
+    textarea, .term-input {
+      font-size: 16px;
+      padding: 12px 14px;
+      min-height: 48px;
+      border-radius: 10px;
+    }
+
+    /* Editor / context / prompt / source / memory etc. (via :global) */
+    :global(.editor-header) {
+      padding: 10px 14px;
+      font-size: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    :global(.ctx-list) {
+      padding: 12px 14px;
+    }
+    :global(.ctx-entry) {
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    :global(.ctx-add-input) {
+      font-size: 14px;
+    }
+    :global(.src-files) {
+      width: 100% !important;
+      max-height: 160px;
+      border-right: none;
+      border-bottom: 1px solid rgba(42, 42, 58, 0.5);
+      overflow-x: hidden;
+    }
+    :global(.src-file) {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+    :global(.src-highlight), :global(.src-input),
+    :global(.prompt-highlight), :global(.prompt-input) {
+      padding: 14px 16px;
+      font-size: 13px;
+    }
+    :global(.memory-list) {
+      padding: 10px 14px;
+    }
+    :global(.tools-list) {
+      padding: 12px 14px;
+    }
+    .tool-card {
+      padding: 12px 14px;
+    }
+    .tool-name { font-size: 15px; }
+    .tool-desc { font-size: 14px; }
+
+    /* Settings - generous and readable even on mobile */
+    .settings-body {
+      padding: 10px 6px;
+    }
+    .settings-body.endpoints-section,
+    .settings-body.appearance-section,
+    .settings-body.agent-section,
+    .settings-body.panes-section,
+    .settings-body.advanced-section {
+      padding: 16px;
+    }
+    .settings-body.endpoints-section {
+      padding-left: 4px;
+      padding-right: 4px;
+    }
+    .form-grid {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .endpoint-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      padding: 12px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .ep-info { width: 100%; }
+    .ep-actions {
+      width: 100%;
+      justify-content: space-between;
+      margin-top: 4px;
+    }
+    .ep-status {
+      min-width: auto;
+      font-size: 13px;
+      order: -1;
+    }
+    .ep-name { font-size: 15px; }
+    .ep-url, .ep-model {
+      font-size: 13px;
+      max-width: 100%;
+    }
+    .ep-models { max-width: 100%; }
+    .priority-controls {
+      min-width: auto;
+      width: 100%;
+      justify-content: flex-start;
+      margin-bottom: 4px;
+    }
+    .icon-btn {
+      width: 22px;
+      height: 22px;
+      font-size: 12px;
+    }
+    .setting-input {
+      font-size: 15px;
+      padding: 8px 12px;
+    }
+    .setting-label { font-size: 15px; }
+    .setting-hint { font-size: 13px; }
+    .segmented button {
+      padding: 8px 12px;
+      font-size: 13px;
+      min-height: 38px;
+    }
+
+    /* Subtabs (Settings) fill full width on mobile, prevent bleed */
+    :global(.settings-subnav) {
+      width: 100%;
+      display: flex;
+      gap: 2px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    :global(.settings-subnav button) {
+      flex: 1 0 auto;
+      min-width: 0;
+      font-size: 10px;
+      padding: 4px 6px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Mobile chat subnav - full width, fits under main tabs */
+    .mobile-chat-subnav {
+      display: flex;
+      width: 100%;
+      gap: 2px;
+      padding: 4px 8px;
+      background: rgba(42, 42, 58, 0.3);
+      border-bottom: 1px solid rgba(42, 42, 58, 0.4);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .mobile-chat-subnav button {
+      flex: 1 0 auto;
+      font-size: 11px;
+      padding: 4px 8px;
+      min-height: 32px;
+      border-radius: 4px;
+      background: rgba(28, 33, 40, 0.6);
+      border: 1px solid rgba(42, 42, 58, 0.5);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+    .mobile-chat-subnav button.active {
+      background: var(--bg-elevated);
+      color: var(--text);
+      border-color: rgba(167, 139, 250, 0.4);
+    }
+
+    /* General content tightening */
+    .input-row {
+      padding: 8px 10px;
+    }
+    .exec-card {
+      font-size: 13px;
+    }
+    .ctx-bar {
+      font-size: 12px;
+      padding: 4px 10px;
+    }
+    .stats {
+      font-size: 12px;
+    }
+
+    /* Mobile adjustments for post-prompt / ctx */
+    .post-prompt-bar {
+      gap: 6px;
+      font-size: 12px;
+    }
+    .ctx-bar {
+      font-size: 12px;
+      padding: 4px 0;
+    }
+    .ctx-track {
+      height: 6px;
+    }
+    .bottom-metrics {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .bottom-actions {
+      flex-wrap: wrap;
+    }
+    .context-below .shown-ctx-item .p {
+      max-width: 100%;
+    }
+
+    /* Markdown / pre blocks */
+    .markdown :global(pre) {
+      padding: 12px 14px;
+      font-size: 13px;
+    }
+    .markdown :global(code) {
+      font-size: 13px;
+    }
+
+    /* Empty states, hints */
+    .empty {
+      font-size: 13px;
+      padding: 24px 0;
+    }
+    .form-hint {
+      font-size: 11px;
+    }
+  }
+
+  /* Extra small phones */
+  @media (max-width: 480px) {
+    header {
+      height: 46px;
+    }
+    nav button {
+      padding: 4px 8px;
+      font-size: 11px;
+      min-height: 34px;
+    }
+    .chat-main {
+      padding: 10px 12px;
+    }
+    .message .user-content,
+    .message.assistant .content {
+      font-size: 14px;
+    }
+    textarea, .term-input {
+      font-size: 16px;
+    }
+    .src-files {
+      max-height: 130px;
+    }
+    .small-btn {
+      min-height: 30px;
+      font-size: 10px;
+    }
+  }
+
+  /* Bonus: make dual / multi-pane UIs (imported from bro-shared) stack nicely on mobile */
+  :global(.dual-panes),
+  :global(.vs-crosstalk),
+  :global(.supervision-pane) {
+    flex-direction: column !important;
+  }
+  :global(.chat-pane) {
+    border-right: none !important;
+    border-bottom: 1px solid rgba(42, 42, 58, 0.3);
+  }
+
+  /* Improve readability of text in multi-mode UIs (dual/vs/supervision) on desktop - larger labels, better contrast */
+  :global(.pane-header),
+  :global(.pane-label),
+  :global(.dual-label) {
+    font-size: 13px !important;
+    color: var(--text-secondary) !important;
+  }
+  :global(.pane-header select) {
+    font-size: 12px !important;
+    padding: 4px 8px !important;
+  }
+  :global(.dual-input textarea) {
+    font-size: 14px !important;
+  }
 </style>

@@ -87,7 +87,7 @@
   </div>
 </main>
 
-<style lang="postcss">
+<style>
   /* Styles for the context editor tab, ported/fixed from gemma-code reference
      (the monolithic worktree version inlines the markup + has these rules in App;
      here we scope them locally to this component for the modular <ContextTab> usage).

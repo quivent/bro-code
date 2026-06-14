@@ -87,7 +87,7 @@
   </div>
 {/if}
 
-<style lang="postcss">
+<style>
   .vs-main {
     flex: 1; overflow-y: auto; padding: 16px 24px; scroll-behavior: smooth;
   }
@@ -115,24 +115,24 @@
   .vs-msg.left { border-left: 2px solid #3fb6b2; }
   .vs-msg.right { border-left: 2px solid #f0883e; }
   .vs-msg.live { opacity: 0.85; }
-  .vs-role { font-weight: 600; font-size: 11px; margin-bottom: 4px; letter-spacing: 0.3px; }
-  .vs-waiting { color: var(--dim); font-size: 11px; font-family: var(--font-mono); padding: 6px 0; }
+  .vs-role { font-weight: 600; font-size: 13px; margin-bottom: 6px; letter-spacing: 0.3px; color: var(--text-secondary); }
+  .vs-waiting { color: var(--dim); font-size: 12px; font-family: var(--font-mono); padding: 8px 0; }
 
   .vs-footer {
-    padding: 6px 16px;
+    padding: 8px 18px;
     border-top: 1px solid rgba(42, 42, 58, 0.3);
   }
   .vs-status {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 12px;
+    gap: 14px;
+    font-size: 13px;
   }
   .streaming { color: #fbbf24; font-family: var(--font-mono); }
   .stop-btn {
     background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.3);
-    color: var(--red); padding: 3px 10px; border-radius: 4px; font-size: 10px; font-family: var(--font-mono);
-    cursor: pointer;
+    color: var(--red); padding: 4px 12px; border-radius: 4px; font-size: 12px; font-family: var(--font-mono);
+    cursor: pointer; min-height: 30px;
   }
   .stop-btn:hover { background: rgba(248, 113, 113, 0.25); }
 

@@ -11,7 +11,7 @@
   </div>
 </div>
 
-<style lang="postcss">
+<style>
   .sovereign-frame {
     border: 1px solid rgba(167, 139, 250, 0.3);
     border-radius: 8px;
