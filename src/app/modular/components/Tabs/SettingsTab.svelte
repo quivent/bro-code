@@ -244,7 +244,7 @@
     <div class="section-header">
       <div>
         <div class="section-title">Registered Endpoints</div>
-        <div class="section-hint">Drag or use arrows to set priority (top = preferred). Simple URLs auto-complete to /v1/chat/completions. For custom remotes, paste the full working completions URL. Active one drives chat + ctx window + health probes.</div>
+        <div class="section-hint">Drag or use arrows to set priority (top = preferred). Simple URLs auto-complete to /v1/chat/completions. For custom remotes, paste the full working completions URL. Active one drives chat + ctx window + health probes. <strong>Auto-saved</strong> to your storage (browser LS / desktop DB / server if logged into web backend).</div>
       </div>
       <div class="endpoint-header-controls">
         <button class="reload-btn" onclick={onRefreshAllHealth}>Refresh health</button>
@@ -267,6 +267,7 @@
       </div>
     {/if}
 
+    <div class="endpoints-list">
     {#each appSettings.endpoints as ep, i (ep.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div 
@@ -282,13 +283,13 @@
         <div class="priority-controls">
           <span class="drag-grip" title="Drag to reorder priority">⠿</span>
           <button class="icon-btn" onclick={() => onMoveEndpoint(ep.id, -1)} disabled={i === 0}>↑</button>
-          <button class="icon-btn" onclick={() => onMoveEndpoint(ep.id, 1)} disabled={i === endpoints.length-1}>↓</button>
+          <button class="icon-btn" onclick={() => onMoveEndpoint(ep.id, 1)} disabled={i === appSettings.endpoints.length-1}>↓</button>
           <span class="priority-num">{i + 1}</span>
         </div>
 
         <div class="ep-info">
           <div class="ep-name">{ep.name}</div>
-          <div class="ep-url" title={ep.url}>{ep.url.length > 80 ? ep.url.slice(0, 77) + '…' : ep.url}</div>
+          <div class="ep-url" title="Click to copy full URL" onclick={() => { navigator.clipboard?.writeText(ep.url).catch(()=>{}); appSettings.settingsStatus = 'Copied to clipboard'; setTimeout(()=>{appSettings.settingsStatus='';}, 1200); }}>{ep.url.length > 80 ? ep.url.slice(0, 77) + '…' : ep.url}</div>
           <div class="ep-model">model: <span>{ep.model || (ep.availableModels?.[0] ? '(auto: ' + ep.availableModels[0] + ')' : '(auto on first use)')}</span></div>
           {#if ep.availableModels && ep.availableModels.length}
             {#if !ep.availableModels.includes(ep.model)}
@@ -323,6 +324,7 @@
         </div>
       </div>
     {/each}
+    </div>
 
     <!-- Add / Edit form -->
     <div class="endpoint-form">
@@ -331,27 +333,42 @@
       </div>
       <form onsubmit={onHandleEndpointFormSubmit}>
         <div class="form-grid">
-          <input class="setting-input" bind:value={appSettings.formName} placeholder="Name (e.g. Local Ollama)" />
-          <input class="setting-input" bind:value={appSettings.formUrl} placeholder="https://example.com  or  https://example.com/v1  or full path" />
+          <div>
+            <div class="form-label">Name</div>
+            <input class="setting-input" bind:value={appSettings.formName} placeholder="e.g. Local Ollama or Oracle" />
+          </div>
+          <div>
+            <div class="form-label">URL / Endpoint</div>
+            <input class="setting-input" bind:value={appSettings.formUrl} placeholder="https://... or http://127.0.0.1:8091" />
+          </div>
           {#if editingId}
             {@const ep = endpoints.find(e => e.id === editingId)}
             {#if ep?.availableModels?.length}
-              <select class="setting-input" bind:value={appSettings.formModel}>
-                {#each ep.availableModels as m}
-                  <option value={m}>{m}</option>
-                {/each}
-              </select>
+              <div>
+                <div class="form-label">Model ID</div>
+                <select class="setting-input" bind:value={appSettings.formModel}>
+                  {#each ep.availableModels as m}
+                    <option value={m}>{m}</option>
+                  {/each}
+                </select>
+              </div>
             {:else}
-              <input class="setting-input" bind:value={appSettings.formModel} placeholder="Model ID (optional — blank = auto-infer first model from the server's /v1/models on Test or first chat)" />
+              <div>
+                <div class="form-label">Model ID (optional)</div>
+                <input class="setting-input" bind:value={appSettings.formModel} placeholder="auto from /v1/models" />
+              </div>
             {/if}
           {:else}
-            <input class="setting-input" bind:value={appSettings.formModel} placeholder="Model ID (optional — blank = auto-infer first model from the server's /v1/models on Test or first chat)" />
+            <div>
+              <div class="form-label">Model ID (optional)</div>
+              <input class="setting-input" bind:value={appSettings.formModel} placeholder="auto from /v1/models" />
+            </div>
           {/if}
           {#if editingId}
             {@const ep = endpoints.find(e => e.id === editingId)}
             {#if ep?.availableModels?.length}
               <div class="form-models">
-                <span class="models-label">Available on server — click chip to use exact ID:</span>
+                <span class="models-label">Server models (click to pick):</span>
                 {#each ep.availableModels as m}
                   <button type="button" class="model-chip" onclick={() => { appSettings.formModel = m; }}>
                     {m}
@@ -363,7 +380,7 @@
         </div>
         <div class="form-actions">
           <button type="submit" class="save-btn">
-            {editingId ? 'Save Changes' : 'Add'}
+            {editingId ? 'Save Changes' : 'Add Endpoint'}
           </button>
           {#if appSettings.editingId}
             <button type="button" class="reload-btn" onclick={onCancelEdit}>Cancel</button>
@@ -748,6 +765,12 @@
     border: 1px solid var(--border);
   }
 
+  /* Make the endpoints section use available vertical space so the taller list feels natural */
+  .settings-body.endpoints-section {
+    display: flex;
+    flex-direction: column;
+  }
+
   .section-header {
     display: flex;
     justify-content: space-between;
@@ -797,21 +820,34 @@
     line-height: 1.4;
   }
 
+  /* Taller scrollable list for endpoints so you can see more without it feeling cramped */
+  .endpoints-list {
+    flex: 1 1 auto;
+    max-height: 650px; /* much taller to show lots of endpoints comfortably */
+    overflow-y: auto;
+    margin-bottom: 12px;
+    padding: 4px 2px;
+    border: 1px solid rgba(42,42,58,0.25);
+    border-radius: 8px;
+    background: rgba(22,27,34,0.3);
+  }
+
   .endpoint-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 14px;
+    padding: 16px 18px;
     border: 1px solid var(--border);
-    border-radius: 10px;
-    margin-bottom: 10px;
-    background: var(--bg-secondary);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    background: linear-gradient(145deg, var(--bg-secondary) 0%, rgba(22,27,34,0.9) 100%);
     font-size: 13px;
     width: 100%;
     box-sizing: border-box;
-    transition: border-color 150ms ease, box-shadow 150ms ease, transform 100ms ease;
+    transition: all 150ms ease;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   }
   .endpoint-row::before {
     content: '';
@@ -819,28 +855,29 @@
     left: 0;
     top: 0;
     bottom: 0;
-    width: 4px;
+    width: 5px;
     background: transparent;
     transition: background 150ms ease;
   }
   .endpoint-row:hover {
-    border-color: rgba(167, 139, 250, 0.35);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    transform: translateY(-1px);
+    border-color: rgba(167, 139, 250, 0.4);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+    transform: translateY(-2px);
   }
   .endpoint-row:hover::before {
-    background: rgba(163, 113, 247, 0.5);
+    background: linear-gradient(to bottom, #3fb6b2, #a371f7);
   }
   .endpoint-row.active {
     border-color: var(--lavend);
-    background: rgba(167, 139, 250, 0.06);
+    background: linear-gradient(145deg, rgba(167,139,250,0.08) 0%, var(--bg-secondary) 100%);
+    box-shadow: 0 4px 12px rgba(167,139,250,0.15);
   }
   .endpoint-row.active::before {
     background: var(--lavend);
   }
   .endpoint-row.dragging {
-    opacity: 0.5;
-    transform: scale(0.98);
+    opacity: 0.4;
+    transform: scale(0.97);
   }
 
   .priority-controls {
@@ -893,10 +930,11 @@
     padding-right: 8px;
   }
   .ep-name {
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text);
-    font-size: 14px;
-    line-height: 1.2;
+    font-size: 15px;
+    line-height: 1.15;
+    letter-spacing: 0.2px;
   }
   .ep-url {
     font-family: var(--font-mono);
@@ -905,7 +943,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-top: 1px;
+    margin-top: 2px;
+    cursor: pointer;
+  }
+  .ep-url:hover {
+    color: #a1a1aa;
+    text-decoration: underline;
   }
   .ep-model {
     font-size: 11px;
@@ -914,7 +957,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
-    margin-top: 1px;
+    margin-top: 2px;
   }
   .ep-model span {
     color: #c5d0e0;
@@ -925,13 +968,13 @@
     font-size: 10px;
     color: #6f7a8a;
     font-family: var(--font-mono);
-    margin-top: 2px;
+    margin-top: 3px;
     opacity: 0.9;
   }
 
   .ep-status {
     font-size: 11px;
-    min-width: 120px;
+    min-width: 110px;
     text-align: right;
     flex-shrink: 0;
   }
@@ -965,97 +1008,113 @@
     flex-shrink: 0;
   }
   .small-btn {
-    background: rgba(28, 33, 40, 0.6);
-    border: 1px solid rgba(42, 42, 58, 0.5);
+    background: rgba(28, 33, 40, 0.55);
+    border: 1px solid rgba(42, 42, 58, 0.45);
     color: var(--text-secondary);
-    padding: 3px 9px;
-    border-radius: 5px;
+    padding: 4px 10px;
+    border-radius: 6px;
     font-size: 10px;
     font-family: var(--font-mono);
     cursor: pointer;
-    min-height: 28px;
+    min-height: 30px;
     transition: all 120ms ease;
     white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
   }
   .small-btn:hover {
     color: var(--text);
     background: var(--bg-elevated);
-    border-color: rgba(167,139,250,0.4);
+    border-color: rgba(167,139,250,0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
   }
   .small-btn.danger {
     color: #f87171;
-    border-color: rgba(239,68,68,0.35);
+    border-color: rgba(239,68,68,0.4);
   }
   .small-btn.danger:hover {
-    background: rgba(248,113,113,0.15);
+    background: rgba(248,113,113,0.2);
     color: #f87171;
+    border-color: #f87171;
   }
   .small-btn.test-btn {
-    border-color: rgba(63,182,178,0.35);
+    border-color: rgba(63,182,178,0.4);
   }
   .small-btn.test-btn:hover {
-    background: rgba(63,182,178,0.15);
+    background: rgba(63,182,178,0.2);
     color: #3fb6b2;
+    border-color: #3fb6b2;
   }
   .small-btn.test-btn.testing { 
-    opacity: 0.7; 
+    opacity: 0.65; 
     pointer-events: none;
   }
   .small-btn:first-child { /* Use button */
-    background: rgba(52,211,153,0.12);
-    border-color: rgba(52,211,153,0.3);
+    background: rgba(52,211,153,0.15);
+    border-color: rgba(52,211,153,0.35);
     color: #34d399;
+    font-weight: 600;
   }
   .small-btn:first-child:hover {
-    background: rgba(52,211,153,0.2);
+    background: rgba(52,211,153,0.25);
+    border-color: #34d399;
   }
 
   .endpoint-form {
-    margin-top: 20px;
-    padding: 18px 20px;
-    border: 1px solid rgba(42,42,58,0.6);
-    border-radius: 12px;
-    background: linear-gradient(145deg, var(--bg-secondary) 0%, rgba(22,27,34,0.85) 100%);
+    margin-top: 24px;
+    padding: 20px 22px;
+    border: 1px solid rgba(42,42,58,0.55);
+    border-radius: 14px;
+    background: linear-gradient(160deg, var(--bg-secondary) 0%, #161b22 100%);
     max-width: 100%;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
     position: relative;
   }
   .endpoint-form::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 3px;
+    height: 4px;
     background: linear-gradient(to right, #3fb6b2, #a371f7, #f0883e);
-    border-radius: 12px 12px 0 0;
-    opacity: 0.7;
+    border-radius: 14px 14px 0 0;
+    opacity: 0.85;
   }
   .form-title {
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 14px;
     color: var(--text);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    letter-spacing: 0.3px;
   }
   .form-title::after {
     content: '';
     flex: 1;
     height: 1px;
-    background: rgba(42,42,58,0.4);
+    background: rgba(42,42,58,0.35);
   }
   .form-grid {
     display: grid;
     /* On large desktop, give the URL field (middle) much more room since endpoints URLs are long */
-    grid-template-columns: 170px 1fr 210px;
-    gap: 10px;
-    margin-bottom: 12px;
+    grid-template-columns: 160px 1fr 200px;
+    gap: 12px;
+    margin-bottom: 14px;
   }
   .form-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
-    padding-top: 4px;
+    padding-top: 6px;
+  }
+  .form-label {
+    font-size: 10px;
+    color: #6f7a8a;
+    font-family: var(--font-mono);
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .form-models {

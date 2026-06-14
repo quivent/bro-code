@@ -202,35 +202,64 @@ export function getHealthUrl(chatUrl: string): string {
  */
 export async function resolveModelForEndpoint(ep: Endpoint): Promise<string> {
   const current = (ep.model || '').trim();
-  if (current && ep.availableModels && ep.availableModels.length && ep.availableModels.includes(current)) {
+  console.log('[resolveModel] called for', ep.name, 'url=', ep.url, 'current model=', current, 'has availableModels=', !!ep.availableModels?.length);
+
+  if (current) {
+    // If the user specified a model for this endpoint, respect it (the "model going in").
+    // Still populate availableModels for the chips in the form if we don't have them yet.
+    if (!ep.availableModels || ep.availableModels.length === 0) {
+      const modelsUrl = getHealthUrl(ep.url);
+      if (modelsUrl) {
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(modelsUrl, { method: 'GET', signal: controller.signal });
+          clearTimeout(t);
+          if (res.ok) {
+            const j = await res.json();
+            const ids: string[] = Array.isArray(j?.data) ? j.data.map((d: any) => d?.id || d?.name).filter(Boolean) : [];
+            if (ids.length) {
+              ep.availableModels = ids;
+              saveEndpoints().catch(() => {});
+            }
+          }
+        } catch (e) {
+          console.log('[resolveModel] list probe failed (non-fatal, using user model):', e);
+        }
+      }
+    }
     return current;
   }
 
+  // No model specified by user -- auto-infer the first one from the server.
   const modelsUrl = getHealthUrl(ep.url);
-  if (!modelsUrl) return current || '';
+  console.log('[resolveModel] modelsUrl=', modelsUrl);
+  if (!modelsUrl) return '';
 
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(modelsUrl, { method: 'GET', signal: controller.signal });
     clearTimeout(t);
+    console.log('[resolveModel] /models fetch status=', res.status);
     if (res.ok) {
       const j = await res.json();
       const ids: string[] = Array.isArray(j?.data) ? j.data.map((d: any) => d?.id || d?.name).filter(Boolean) : [];
+      console.log('[resolveModel] got ids from server:', ids);
       if (ids.length) {
         ep.availableModels = ids;
-        if (!current || !ids.includes(current)) {
-          ep.model = ids[0];
-        }
+        ep.model = ids[0];
         // best-effort persist (works for both Tauri invoke and web localStorage path)
         saveEndpoints().catch(() => {});
-        return ep.model || ids[0];
+        console.log('[resolveModel] auto set model to', ids[0]);
+        return ids[0];
       }
     }
-  } catch {
+  } catch (e) {
+    console.log('[resolveModel] probe failed:', e);
     // fall back silently to whatever (possibly empty) was stored
   }
-  return current || '';
+  return '';
 }
 
 export function getActiveEndpoint(): Endpoint | null {
@@ -244,34 +273,19 @@ export function getActiveEndpoint(): Endpoint | null {
 }
 
 export function cleanBadEndpoints() {
-  // Much gentler now: we only *normalize* URLs and drop entries that contain obvious garbage
-  // strings left behind by previous failed UI operations (error messages embedded in the URL field).
-  // We no longer auto-delete user-saved endpoints just because they look odd, point at a custom port,
-  // temporarily failed a health check, etc. The user can delete them explicitly in the Settings UI.
-  // This was a major source of "you keep clearing my endpoints/settings".
-  const beforeCount = settings.endpoints.length;
-  settings.endpoints = settings.endpoints
-    .map((e: Endpoint) => {
-      const fixed = normalizeToChatCompletions(e.url);
-      return fixed ? { ...e, url: fixed } : e;
-    })
-    .filter((e: Endpoint) => {
-      const fixedUrl = e.url || '';
-      const u = fixedUrl.toLowerCase();
-      // Only drop the truly toxic ones that have error junk in them (from past bad state in the form or fetch failures)
-      if (u.includes('failed to load resource') || u.includes('not found (completions') || u.includes('[error]')) {
-        console.warn('[settings] dropping garbage endpoint entry that contained error text:', e);
-        return false;
-      }
-      // We *keep* everything else, even if it doesn't look like a perfect http URL yet (user may be in the middle of editing)
-      // or if it points at :5314 (dev testing) etc. Let the user manage their list.
-      if (!fixedUrl || !fixedUrl.startsWith('http')) {
-        // leave it; the UI will show it as invalid and the test will fail gracefully
-        return true;
-      }
-      return true;
-    });
-  if (settings.endpoints.length < beforeCount) {
+  // Only normalize URLs. We no longer auto-drop any user-saved endpoints on load.
+  // Bad or unreachable ones are skipped at use time (in test/streamTurn) and the user can
+  // edit or delete them in the UI. This was the main reason users had to re-type their
+  // endpoints on every reload.
+  const original = settings.endpoints;
+  settings.endpoints = original.map((e: Endpoint) => {
+    const fixed = normalizeToChatCompletions(e.url);
+    return fixed ? { ...e, url: fixed } : e;
+  });
+  // If any URL was normalized (cleaned), persist so the stored data is tidy.
+  const normalized = settings.endpoints;
+  const changed = normalized.some((e, i) => e.url !== original[i]?.url);
+  if (changed) {
     void saveEndpoints().catch(() => {});
   }
 }
@@ -560,9 +574,15 @@ export async function setActive(id: string) {
   settings.activeEndpointId = id;
   settings.healthStatus = 'unknown';
   settings.healthMsg = '';
-  await saveEndpoints();
   const ep = getActiveEndpoint();
   if (ep) {
+    // Clear previous health so the UI pill resets and we force a fresh test/attempt.
+    // This ensures the endpoint the user just selected is actually tried for chat
+    // (previously bad health could cause it to be skipped even if now reachable).
+    if (ep.lastHealth) {
+      ep.lastHealth = undefined;
+      settings.endpoints = [...settings.endpoints];
+    }
     // If this endpoint was previously tested and has the real model list,
     // but the stored model is not one of them (e.g. old friendly "Gemma"),
     // auto-correct to the first valid full model ID before using for chat.
@@ -574,6 +594,7 @@ export async function setActive(id: string) {
       settings.settingsStatus = `Auto-corrected model to server's exact ID: ${ep.model}`;
       setTimeout(() => { settings.settingsStatus = ''; }, 2500);
     }
+    await saveEndpoints();
     testEndpoint(ep);
   }
 }

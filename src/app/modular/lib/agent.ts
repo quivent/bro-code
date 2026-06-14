@@ -198,7 +198,9 @@ export async function createAgentCore(opts: {
 
     for (const ep of candidates) {
       if (!fallback && ep.id !== (activeId || candidates[0]?.id)) continue;
-      if (ep.lastHealth && !ep.lastHealth.ok) {
+      // Always attempt the active endpoint even if previously marked unhealthy.
+      // Only skip other unhealthy ones (so the one the user explicitly selected in Settings gets tried).
+      if (ep.lastHealth && !ep.lastHealth.ok && ep.id !== activeId) {
         lastErr = ep.lastHealth.message || 'skipped unhealthy endpoint';
         continue;
       }
@@ -217,7 +219,7 @@ export async function createAgentCore(opts: {
       const modelToUse = await resolveModelForEndpoint(ep);
       // ensure any UI (endpoints list in Settings, currentModel derived, etc) sees the freshly inferred ID
       appSettings.endpoints = [...appSettings.endpoints];
-      console.warn(`[inference] chat completions POST → ${chatUrl} (model: ${modelToUse})`);
+      console.warn(`[inference] chat completions POST → ${chatUrl} (model: ${modelToUse})  [activeId=${activeId}, ep.id=${ep.id}, ep.model after resolve=${ep.model}]`);
       try {
         abortController = new AbortController();
         const res = await fetch(chatUrl, {

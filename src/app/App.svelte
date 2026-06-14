@@ -74,6 +74,7 @@
     addLocalEndpoint,
     syncLocalEndpointPorts,
     saveLocalPortAndSync,
+    saveEndpoints,
     // Pure URL helpers (reused for probe so /models never gets dup /v1 from crude replace)
     getHealthUrl,
     resolveModelForEndpoint,
@@ -177,6 +178,11 @@
 
   let webBackendUrl = $state(localStorage.getItem('bro-web:backend-url') || '');
   let webAuthUser = $state('');
+
+  // Exploring gate: completely blank screen. Click+drag to draw a glowing yellow/golden line.
+  // Pass if drawn >10s with primarily curved (not straight) motions. Then the main app appears.
+  let canvasEl = $state(null);
+  let gateEntered = $state(localStorage.getItem('bro-entered') === 'true');
 
   async function refreshWebAuthUser() {
     const base = localStorage.getItem('bro-web:backend-url') || webBackendUrl;
@@ -312,6 +318,9 @@
     try {
       await loadAppSettings();
 
+      // Record the initial active so the change-effect below doesn't double-init on startup
+      lastActiveId = appSettings.activeEndpointId || '';
+
       // Kick off unified agent so chat benefits from dynamic endpoints + memory/prompt
       void initUnifiedAgent();
 
@@ -395,6 +404,9 @@
   // Dedup for probe to avoid race/double pings on init or rapid settings updates
   let lastProbedEndpoint = $state('');
 
+  // Track last active to avoid re-initing agent on initial load
+  let lastActiveId = $state('');
+
   // Context window tracking + usage bar (imported from gemma-code's chat UI)
   // ctxWindow = server's max_model_len (probed from /v1/models on the active endpoint)
   // ctxUsedTokens ~ chars/4 estimate of what will *actually* be sent next (after client-side sliding/prune per maxHistoryTurns).
@@ -462,6 +474,7 @@
           if (resolved) {
             // ensure the endpoints array mutation is seen for reactivity (list + derived currentModel)
             appSettings.endpoints = [...appSettings.endpoints];
+            void saveEndpoints().catch(() => {});
           }
         });
       }
@@ -481,6 +494,19 @@
       lastProbedEndpoint = ep;
       // small delay to let health settle (the probe itself is now throttled + guarded)
       setTimeout(() => { void probeCtxWindow(); }, 350);
+    }
+  });
+
+  // Re-init the agent whenever the active endpoint changes via Settings so the *next* send
+  // (and ctx probe) uses the newly selected endpoint/model. We guard with lastActiveId to
+  // avoid double-init on the very first load (loadSettings already calls initUnifiedAgent).
+  $effect(() => {
+    const activeId = appSettings.activeEndpointId;
+    if (activeId && activeId !== lastActiveId) {
+      lastActiveId = activeId;
+      if (unifiedAgent) {
+        void initUnifiedAgent();
+      }
     }
   });
 
@@ -785,6 +811,16 @@
       const maxTools = appSettings.maxToolHistory || 0;
       if (maxTurns > 0 || maxTools > 0) {
         historyForModel = pruneHistoryForContext(historyForModel, maxTurns, maxTools);
+      }
+
+      // Ensure the active endpoint's model is resolved before sending (probes /v1/models if blank).
+      // This guarantees the "model" field goes into the completions request (addresses cases where
+      // the endpoint was selected without a prior Test, so model was still blank).
+      const activeEp = appSettings.endpoints.find(e => e.id === appSettings.activeEndpointId) || appSettings.endpoints[0];
+      console.log('[chat] activeEndpointId at send time:', appSettings.activeEndpointId, 'activeEp:', activeEp ? {name: activeEp.name, url: activeEp.url, model: activeEp.model} : null);
+      if (activeEp) {
+        const resolvedModel = await resolveModelForEndpoint(activeEp);
+        console.log('[chat] after resolve for activeEp, modelToUse will be:', resolvedModel, 'ep.model now:', activeEp.model);
       }
 
       const result = await uAgent.send(text, {
@@ -1291,9 +1327,133 @@
   onDestroy(() => {
     stopCtxPolling();
   });
+
+  // === Exploring doodle gate (per user insistence) ===
+  // Completely blank dark screen. Mousedown + drag draws a glowing yellow/golden line.
+  // To "enter": draw for >=7 seconds OR complete >=12 loops (full turns).
+  // On success the gate overlay disappears and the normal app is revealed.
+  // Uses localStorage 'bro-entered' so it remembers for the session/browser.
+  let isDrawingGate = false;
+  let gatePoints: Array<{x: number, y: number, t: number}> = [];
+  let gateStartTime = 0;
+
+  function checkGateDrawing(points: Array<{x: number, y: number, t: number}>, duration: number): boolean {
+    if (!points || points.length < 20) return false;
+    let pathLen = 0;
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - points[i-1].x;
+      const dy = points[i].y - points[i-1].y;
+      pathLen += Math.hypot(dx, dy);
+    }
+    if (pathLen < 150) return false;
+    let turnSum = 0;
+    let segs = 0;
+    for (let i = 2; i < points.length; i++) {
+      const ax = points[i-1].x - points[i-2].x;
+      const ay = points[i-1].y - points[i-2].y;
+      const bx = points[i].x - points[i-1].x;
+      const by = points[i].y - points[i-1].y;
+      const la = Math.hypot(ax, ay) || 1;
+      const lb = Math.hypot(bx, by) || 1;
+      const dot = ax * bx + ay * by;
+      const cos = Math.max(-1, Math.min(1, dot / (la * lb)));
+      const ang = Math.acos(cos);
+      turnSum += ang;
+      segs++;
+    }
+    const numLoops = Math.floor(turnSum / (2 * Math.PI));
+    const hasTime = duration >= 7000;
+    const hasLoops = numLoops >= 12;
+    return hasTime || hasLoops;
+  }
+
+  function setupGateCanvas() {
+    const canvas = canvasEl;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Golden glowing line
+    ctx.strokeStyle = '#ffdd66';
+    ctx.lineWidth = 5.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowBlur = 28;
+    ctx.shadowColor = '#ffaa33';
+
+    canvas.addEventListener('mousedown', (e: MouseEvent) => {
+      if (gateEntered) return;
+      isDrawingGate = true;
+      gatePoints = [];
+      gateStartTime = performance.now();
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      gatePoints.push({x, y, t: gateStartTime});
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    });
+
+    canvas.addEventListener('mousemove', (e: MouseEvent) => {
+      if (!isDrawingGate || gateEntered) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      gatePoints.push({x, y, t: performance.now()});
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    });
+
+    const finishDraw = () => {
+      if (!isDrawingGate) return;
+      isDrawingGate = false;
+      const duration = performance.now() - gateStartTime;
+      const passed = checkGateDrawing(gatePoints, duration);
+      if (passed) {
+        gateEntered = true;
+        localStorage.setItem('bro-entered', 'true');
+        // gate overlay will be removed by reactivity; main app revealed
+      } else {
+        // clear the failed attempt after a short pause so screen returns to blank
+        setTimeout(() => {
+          if (canvasEl && !gateEntered) {
+            const c = canvasEl;
+            const ct = c.getContext('2d');
+            if (ct) ct.clearRect(0, 0, c.width, c.height);
+          }
+        }, 900);
+      }
+    };
+
+    canvas.addEventListener('mouseup', finishDraw);
+    canvas.addEventListener('mouseleave', () => { isDrawingGate = false; });
+  }
+
+  $effect(() => {
+    if (canvasEl && !gateEntered) {
+      setupGateCanvas();
+    }
+  });
 </script>
 
 <svelte:window onkeydown={globalKeydown} />
+
+{#if !gateEntered}
+  <!-- Completely blank screen (exploring mode). 
+       Mousedown + drag to draw a glowing yellow/golden line.
+       Enter when drawn for >=7 seconds OR completed >=12 loops (full turns). -->
+  <div style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0d1117;z-index:999999;cursor:crosshair;">
+    <canvas bind:this={canvasEl} style="width:100%;height:100%;display:block;"></canvas>
+  </div>
+{/if}
 
 <div class="app">
   <header>
@@ -1343,10 +1503,9 @@
     </span>
   </header>
 
-  <!-- Mobile chat sub-tabs: Prompt, Memory, Tools underneath Chat for mobile -->
+  <!-- Mobile chat sub-tabs: Prompt, Memory, Tools underneath Chat for mobile (no repeated "Chat" on the Chat page) -->
   {#if isMobile && ['chat','prompt','memory','tools'].includes(activeTab)}
     <div class="mobile-chat-subnav">
-      <button class:active={activeTab === 'chat' && !chatTermSplit} onclick={() => { activeTab = 'chat'; chatTermSplit = false; }}>Chat</button>
       <button class:active={activeTab === 'prompt'} onclick={() => activeTab = 'prompt'}>Prompt</button>
       <button class:active={activeTab === 'memory'} onclick={() => activeTab = 'memory'}>Memory</button>
       <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Tools</button>
@@ -1355,21 +1514,15 @@
 
   <!-- Chat Tab -->
   {#if activeTab === 'chat'}
-  <!-- Modes listed directly underneath chat (Solo / Dual / VS / Supervision), ported from gemma-code ChatComposer chat-mode-bar -->
+  <!-- Modes listed directly underneath chat (Solo / Dual / Crosstalk / Supervise + Terminal split view).
+       Terminal is next to Supervise per request. VS removed, only Crosstalk. Supervision renamed to Supervise.
+       No repeated "Chat" subtab on the Chat page. -->
   <div class="chat-mode-bar">
-    <button class:active={appSettings.chatMode === 'solo'} onclick={() => { appSettings.chatMode = 'solo'; dualMode = false; }}>Solo</button>
-    <button class:active={appSettings.chatMode === 'dual'} onclick={() => { appSettings.chatMode = 'dual'; dualMode = true; }}>Dual</button>
-    <button class:active={appSettings.chatMode === 'vs'} onclick={() => { appSettings.chatMode = 'vs'; dualMode = false; }}>VS (crosstalk)</button>
-    <button class:active={appSettings.chatMode === 'supervision'} onclick={() => { appSettings.chatMode = 'supervision'; dualMode = false; }}>Supervision</button>
-  </div>
-
-  <!-- Chat subtabs: the previous "Chat+term" toggle is now a proper subtab under the main Chat tab.
-       This keeps the primary nav bar clean (no conditional accessory buttons).
-       "Terminal" here activates the combined chat+terminal split view while staying in the Chat main tab.
-       The top-level Terminal tab (when visible) is still available for full-screen dedicated terminal use. -->
-  <div class="chat-subnav">
-    <button class:active={!chatTermSplit} onclick={() => chatTermSplit = false}>Chat</button>
-    <button class:active={chatTermSplit} onclick={() => chatTermSplit = true}>Terminal</button>
+    <button class:active={!chatTermSplit && appSettings.chatMode === 'solo'} onclick={() => { appSettings.chatMode = 'solo'; dualMode = false; chatTermSplit = false; }}>Solo</button>
+    <button class:active={!chatTermSplit && appSettings.chatMode === 'dual'} onclick={() => { appSettings.chatMode = 'dual'; dualMode = true; chatTermSplit = false; }}>Dual</button>
+    <button class:active={!chatTermSplit && appSettings.chatMode === 'vs'} onclick={() => { appSettings.chatMode = 'vs'; dualMode = false; chatTermSplit = false; }}>Crosstalk</button>
+    <button class:active={!chatTermSplit && appSettings.chatMode === 'supervision'} onclick={() => { appSettings.chatMode = 'supervision'; dualMode = false; chatTermSplit = false; }}>Supervise</button>
+    <button class:active={chatTermSplit} onclick={() => { chatTermSplit = true; appSettings.chatMode = 'solo'; dualMode = false; }}>Terminal</button>
   </div>
 
   {#if chatTermSplit}
@@ -2111,12 +2264,18 @@
   }
   .mode-indicator strong { color: var(--lavend); font-weight: 600; }
 
-  /* chat-mode-bar: modes listed directly underneath chat (Solo/Dual/VS/Supervision).
+  /* chat-mode-bar: modes listed directly underneath chat (Solo/Dual/Crosstalk/Supervise + Terminal).
+     Terminal next to Supervise. VS removed (only Crosstalk). Supervision -> Supervise.
      Matches gemma-code's .chat-mode-bar in ChatComposer for consistent "under chat" UX. */
   .chat-mode-bar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid rgba(42,42,58,0.4); }
   .chat-mode-bar button { background: rgba(28,33,40,0.6); border: 1px solid rgba(42,42,58,0.5); color: var(--text-secondary); padding: 5px 12px; border-radius: 4px; font-size: 13px; font-family: var(--font-mono); cursor: pointer; min-height: 30px; }
   .chat-mode-bar button.active { background: var(--bg-elevated); color: var(--text); border-color: rgba(167,139,250,0.4); font-weight: 600; }
   .chat-mode-bar button:hover { color: var(--text); background: rgba(42,42,58,0.5); }
+  /* Terminal button in the same bar, next to Supervise */
+  .chat-mode-bar button:last-child { /* Terminal */
+    margin-left: 8px;
+    border-color: rgba(63,182,178,0.4);
+  }
 
   /* chat-subnav: subtabs under the main Chat tab (e.g. pure Chat view vs combined Chat+Terminal split).
      Replaces the old accessory "Chat+term" button that used to appear in the primary nav.
@@ -3055,7 +3214,7 @@
       text-overflow: ellipsis;
     }
 
-    /* Mobile chat subnav - full width, fits under main tabs */
+    /* Mobile chat subnav - full width, fits under main tabs (Prompt/Memory/Tools only; no repeated Chat on Chat page) */
     .mobile-chat-subnav {
       display: flex;
       width: 100%;

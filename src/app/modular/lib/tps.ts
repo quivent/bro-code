@@ -41,6 +41,24 @@ function normalizeToChatCompletions(input: string): string {
   }
 }
 
+function getLocalModelsUrl(chatUrl: string): string {
+  const fullChat = normalizeToChatCompletions(chatUrl);
+  if (!fullChat) return '';
+  try {
+    const u = new URL(fullChat);
+    if (u.pathname.endsWith('/chat/completions')) {
+      u.pathname = u.pathname.replace(/\/chat\/completions$/, '/models');
+      return u.toString();
+    }
+    let base = u.pathname.replace(/\/$/, '') || '/v1';
+    base = base.replace(/\/v1(\/+v1)*/g, '/v1');
+    u.pathname = base + '/models';
+    return u.toString();
+  } catch {
+    return '';
+  }
+}
+
 export async function measureTps(ep: Endpoint): Promise<number | null> {
   // Full normalize right before the net call (defense in depth). Prevents any stale dup-/v1 or
   // trailing slash from causing 404 on the test completions POST (which previously could make
@@ -49,6 +67,29 @@ export async function measureTps(ep: Endpoint): Promise<number | null> {
 
   if (!target || !target.startsWith('http')) {
     return null;
+  }
+
+  // Best-effort: if the endpoint has no model yet, probe /v1/models ourselves for this TPS test
+  // so that the completions POST includes a model (fixes "model isn't going in" for un-tested endpoints).
+  // This mirrors what resolveModelForEndpoint does in the main chat path and in testEndpoint.
+  if (!ep.model) {
+    const modelsUrl = getLocalModelsUrl(target);
+    if (modelsUrl) {
+      try {
+        const controller = new AbortController();
+        const tt = setTimeout(() => controller.abort(), 5000);
+        const mres = await fetch(modelsUrl, { method: 'GET', signal: controller.signal });
+        clearTimeout(tt);
+        if (mres.ok) {
+          const mj = await mres.json();
+          const ids: string[] = Array.isArray(mj?.data) ? mj.data.map((d: any) => d?.id || d?.name).filter(Boolean) : [];
+          if (ids.length) {
+            ep.availableModels = ids;
+            ep.model = ids[0];
+          }
+        }
+      } catch {}
+    }
   }
   const u = target.toLowerCase();
   if (u.includes(':5314') || u.includes('not found (completions') || u.includes('failed to load resource')) {
